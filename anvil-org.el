@@ -586,12 +586,14 @@ Returns the content string or nil if not found."
       (anvil-org--extract-headline-content))))
 
 (defun anvil-org--validate-todo-state (state)
-  "Validate STATE is a valid TODO keyword."
-  (let ((valid-states
-         (delete
-          "|"
-          (org-remove-keyword-keys
-           (apply #'append (mapcar #'cdr org-todo-keywords))))))
+  "Validate STATE is a valid TODO keyword.
+Must be called with the target Org buffer current: the valid set is
+`org-todo-keywords-1', which `org-mode' computes per buffer from the
+global `org-todo-keywords' plus any in-buffer `#+TODO:' /
+`#+SEQ_TODO:' / `#+TYP_TODO:' lines, including those pulled in via
+`#+SETUPFILE:'.  Reading the global variable alone rejects keywords a
+file legitimately declares."
+  (let ((valid-states org-todo-keywords-1))
     (unless (member state valid-states)
       (anvil-org--tool-validation-error
        "Invalid TODO state: '%s' - valid states: %s"
@@ -1376,12 +1378,13 @@ MCP Parameters:
   (let* ((parsed (anvil-org--parse-resource-uri uri))
          (file-path (car parsed))
          (headline-path (cdr parsed)))
-    (anvil-org--validate-todo-state new_state)
     (anvil-org--modify file-path "update"
                                 `((previous_state
                                    .
                                    ,(or current_state ""))
                                   (new_state . ,new_state))
+      ;; Validate inside the target buffer so per-file keywords count.
+      (anvil-org--validate-todo-state new_state)
       (anvil-org--goto-headline-from-uri
        headline-path (string-prefix-p anvil-org--uri-id-prefix uri))
 
@@ -1450,7 +1453,6 @@ MCP Parameters:
   position - \"first\" to insert as parent's first child (optional;
              mutually exclusive with after_uri)"
   (anvil-org--validate-headline-title title)
-  (anvil-org--validate-todo-state todo_state)
   (let* ((tag-list (anvil-org--validate-and-normalize-tags tags))
          file-path
          parent-path
@@ -1480,6 +1482,8 @@ MCP Parameters:
                                    .
                                    ,(file-name-nondirectory file-path))
                                   (title . ,title))
+      ;; Validate inside the target buffer so per-file keywords count.
+      (anvil-org--validate-todo-state todo_state)
       (let ((parent-level
              (anvil-org--navigate-to-parent-or-top
               parent-path parent-id)))
