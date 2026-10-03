@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bound successful inline tool-result text to 2 MiB of projected escaped
+  UTF-8 JSON-string bytes by default, excluding surrounding quotes. Reject
+  oversized normalized results before disclosure and check disclosure output
+  again before payload telemetry. Rejections use a fixed, content-free error.
+  Nil or a non-positive integer `anvil-server-max-inline-result-bytes`
+  restores legacy successful-result behavior. This does not cap execution,
+  result construction, existing error paths, or complete transport frames.
 - Bound inline `file-read` to 1 MiB of raw selected bytes by default. Large
   unpaginated reads fail with pagination instructions; paginated reads use
   bounded chunks instead of retaining the whole file. Line-ending detection

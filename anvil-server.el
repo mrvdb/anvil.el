@@ -131,6 +131,13 @@ with a trailer stating the original length.  Nil disables the cap."
   :type '(choice (const :tag "Unlimited" nil) integer)
   :group 'anvil-server)
 
+(defcustom anvil-server-max-inline-result-bytes (* 2 1024 1024)
+  "Maximum escaped UTF-8 bytes of successful inline tool-result text.
+The two JSON string quote delimiters are excluded.  Nil, zero, or a negative
+integer disables the limit.  Other values fail closed."
+  :type '(choice (const :tag "Unlimited" nil) integer)
+  :group 'anvil-server)
+
 ;;; Public Constants
 
 (defconst anvil-server-name "anvil"
@@ -192,6 +199,14 @@ legacy requests and never mutated."
 
 (defconst anvil-server-jsonrpc-error-internal -32603
   "JSON-RPC 2.0 Internal Error code.")
+
+(defconst anvil-server--inline-result-limit-error-text
+  "Inline tool result rejected: size limit configuration is invalid."
+  "Fixed content-free diagnostic returned for an invalid inline result limit.")
+
+(defconst anvil-server--inline-result-too-large-text
+  "Inline tool result rejected: output exceeds the configured size limit."
+  "Fixed content-free diagnostic returned for an oversized inline result.")
 
 ;;; Internal Constants
 
@@ -1613,6 +1628,44 @@ SERVER-ID is resolved through `anvil-server-id-aliases'."
     (anvil-server--jsonrpc-response
      id `((resourceTemplates . ,template-list)))))
 
+(defun anvil-server--projected-json-string-bytes (text &optional stop-after)
+  "Return projected JSON-escaped UTF-8 bytes for TEXT, excluding quotes.
+When STOP-AFTER is a non-negative integer, stop once the count exceeds it.
+This projector does not call the JSON encoder or build an escaped copy."
+  (unless (stringp text)
+    (signal 'wrong-type-argument (list 'stringp text)))
+  (let ((index 0)
+        (total 0)
+        (multibyte (multibyte-string-p text)))
+    (catch 'done
+      (while (< index (length text))
+        (let ((character (aref text index)))
+          (setq total
+                (+ total
+                   (cond
+                    ((or (= character ?\") (= character ?\\)) 2)
+                    ((memq character '(8 9 10 12 13)) 2)
+                    ((< character 32) 6)
+                    ((and (not multibyte) (>= character 128)) 5)
+                    ((>= character #x200000) 5)
+                    ((< character #x80) 1)
+                    ((< character #x800) 2)
+                    ((< character #x10000) 3)
+                    (t 4))))
+          (setq index (1+ index))
+          (when (and (integerp stop-after) (>= stop-after 0)
+                     (> total stop-after))
+            (throw 'done total))))
+      total)))
+
+(defun anvil-server--inline-result-over-limit-p (text)
+  "Return non-nil if TEXT projects beyond the configured positive limit."
+  (and (integerp anvil-server-max-inline-result-bytes)
+       (> anvil-server-max-inline-result-bytes 0)
+       (> (anvil-server--projected-json-string-bytes
+           text anvil-server-max-inline-result-bytes)
+          anvil-server-max-inline-result-bytes)))
+
 (defun anvil-server--handle-tools-call
     (id params method-metrics server-id)
   "Handle tools/call request with ID and PARAMS for SERVER-ID.
@@ -1635,7 +1688,21 @@ virtual server-ids share the same handler pool."
             (when tools-table
               (gethash tool-name tools-table))))
     (if tool
-        (let ((handler (plist-get tool :handler))
+        (if (not (or (null anvil-server-max-inline-result-bytes)
+                     (and (integerp anvil-server-max-inline-result-bytes)
+                          (<= anvil-server-max-inline-result-bytes 0))
+                     (and (integerp anvil-server-max-inline-result-bytes)
+                          (> anvil-server-max-inline-result-bytes 0))))
+            (progn
+              (anvil-server-metrics--track-tool-call tool-name t)
+              (anvil-server--metrics-bump
+               (anvil-server-metrics-errors method-metrics))
+              (anvil-server--respond-with-result
+               (list :id id)
+               `((content . [((type . "text")
+                              (text . ,anvil-server--inline-result-limit-error-text))])
+                 (isError . t))))
+          (let ((handler (plist-get tool :handler))
               (context (list :id id)))
           (condition-case err
               (let*
@@ -1746,7 +1813,7 @@ virtual server-ids share the same handler pool."
                    ;; preferred long-form (it round-trips through the
                    ;; raw handler for ERT), but un-wrapped handlers no
                    ;; longer need to hand-stringify.
-                   (result-text
+                   (raw-result-text
                     (cond
                      ((null result)
                       "")
@@ -1766,30 +1833,53 @@ virtual server-ids share the same handler pool."
                           " value (string / nil / plist / list /"
                           " hash-table / vector), got: %s")
                          (type-of result)))))))
-                   (result-text
-                    (if (fboundp 'anvil-disclosure-budget-apply)
-                        (anvil-disclosure-budget-apply tool-name result-text)
-                      result-text))
+                   (initial-overflow
+                    (and (stringp raw-result-text)
+                         (anvil-server--inline-result-over-limit-p
+                          raw-result-text)))
+                   (disclosed-result-text
+                    (if initial-overflow
+                        raw-result-text
+                      (if (fboundp 'anvil-disclosure-budget-apply)
+                          (anvil-disclosure-budget-apply
+                           tool-name raw-result-text)
+                        raw-result-text)))
+                   (final-overflow
+                    (or initial-overflow
+                        (and (stringp disclosed-result-text)
+                             (anvil-server--inline-result-over-limit-p
+                              disclosed-result-text))))
+                   (final-result-text
+                    (if final-overflow
+                        anvil-server--inline-result-too-large-text
+                      (substring-no-properties disclosed-result-text)))
                    ;; Wrap the handler result in the MCP format
                    (formatted-result
                     `((content
                        .
                        ,(vector
-                         `((type . "text") (text . ,result-text))))
-                      (isError . :json-false))))
-                (anvil-server-metrics--track-tool-payload
-                 tool-name tool-args result-text)
-                (anvil-server-metrics--track-tool-call tool-name)
-                (condition-case hook-err
-                    (run-hook-with-args
-                     'anvil-server-tool-dispatch-hook
-                     tool-name server-id)
-                  (error
-                   (message "anvil-server: dispatch-hook error on %s: %s"
-                            tool-name
-                            (error-message-string hook-err))))
-                (anvil-server--respond-with-result
-                 context formatted-result))
+                         `((type . "text") (text . ,final-result-text))))
+                      (isError . ,(if final-overflow t :json-false)))))
+                (if final-overflow
+                    (progn
+                      (anvil-server-metrics--track-tool-call tool-name t)
+                      (anvil-server--metrics-bump
+                       (anvil-server-metrics-errors method-metrics))
+                      (anvil-server--respond-with-result
+                       context formatted-result))
+                  (anvil-server-metrics--track-tool-payload
+                   tool-name tool-args final-result-text)
+                  (anvil-server-metrics--track-tool-call tool-name)
+                  (condition-case hook-err
+                      (run-hook-with-args
+                       'anvil-server-tool-dispatch-hook
+                       tool-name server-id)
+                    (error
+                     (message "anvil-server: dispatch-hook error on %s: %s"
+                              tool-name
+                              (error-message-string hook-err))))
+                  (anvil-server--respond-with-result
+                   context formatted-result)))
             ;; Handle invalid parameter errors
             (anvil-server-invalid-params
              (anvil-server-metrics--track-tool-call tool-name t)
@@ -1835,7 +1925,7 @@ virtual server-ids share the same handler pool."
                        (let ((print-length 64)
                              (print-level 8))
                          (error-message-string err)))
-               anvil-server-tool-error-max-chars)))))
+               anvil-server-tool-error-max-chars))))))
       (anvil-server-metrics--track-tool-call tool-name t)
       (anvil-server--metrics-bump (anvil-server-metrics-errors method-metrics))
       (anvil-server--jsonrpc-error
