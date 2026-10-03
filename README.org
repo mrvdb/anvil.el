@@ -450,6 +450,15 @@ For org-mode refactors specifically, MCP-backed operations
 (section move, refile, split) run *10–20× cheaper in tokens* than
 their Read + Write equivalents.
 
+On develop after v1.4.0, =file-read= defaults to a 1 MiB raw-byte cap.
+For larger files, pass =offset="0"= and =limit="200"=; reduce the limit
+if the selected page also exceeds the cap. Pagination uses bounded chunks
+and retains only the selected page. Preserving automatic line-ending
+detection may require an additional bounded scan; exact =:total-lines=
+still needs a complete scan. The cap does not bound encoded MCP response size or scan
+time. Set =anvil-file-max-inline-read-bytes= to nil, zero or a negative
+integer only when explicitly choosing legacy full-file reads.
+
 ** Batch edits into one round trip
 
 When an agent makes several edits to the same file, each becomes a

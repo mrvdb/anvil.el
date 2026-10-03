@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Bound inline `file-read` to 1 MiB of raw selected bytes by default. Large
+  unpaginated reads fail with pagination instructions; paginated reads use
+  bounded chunks instead of retaining the whole file. Line-ending detection
+  and total-line counts can require two full scans. Nil or non-positive
+  integer `anvil-file-max-inline-read-bytes`
+  explicitly restores legacy reads; the cap does not bound encoded MCP size.
+
 ## [1.4.0] - 2026-10-03
 
 Release of the develop line through 2026-10-03 on `master`. This release
