@@ -731,6 +731,25 @@ picking up the status line itself."
             (should (null (plist-get r :missing-params)))))
       (delete-directory d t))))
 
+(ert-deftest anvil-dev-test-release-audit-accepts-internal-and-encoded-tools ()
+  "Internal helper names and registration-encoded handlers pass source audit."
+  (let ((metrics-file
+         (locate-file "anvil-server-metrics" load-path
+                      '(".el") #'file-readable-p))
+        (context-file
+         (locate-file "anvil-context" load-path
+                      '(".el") #'file-readable-p)))
+    (should metrics-file)
+    (should context-file)
+    (should (string-suffix-p ".el" metrics-file))
+    (should (string-suffix-p ".el" context-file))
+    (let ((result (anvil-dev-release-audit
+                   (file-name-directory metrics-file) :scope metrics-file)))
+      (should (null (plist-get result :missing-params))))
+    (let ((result (anvil-dev-release-audit
+                   (file-name-directory context-file) :scope context-file)))
+      (should (null (plist-get result :plist-return))))))
+
 (ert-deftest anvil-dev-test-test-run-all-minimal-omits-per-file ()
   "With `:minimal t' the return plist has no :per-file key."
   (cl-letf* ((files '("/tmp/anvil-fake/tests/anvil-x-test.el"))
