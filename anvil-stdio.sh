@@ -109,7 +109,10 @@ anvil_emacsclient_retry() {
 		if [ "$_anvil_tmo" = "0" ]; then
 			out=$(emacsclient "$@" 2>"$stderr_file")
 		elif command -v timeout >/dev/null 2>&1; then
-			out=$(timeout "$_anvil_tmo" emacsclient "$@" 2>"$stderr_file")
+			# GNU timeout otherwise waits forever for a TERM-resistant
+			# emacsclient to exit.  Escalate its command group to KILL
+			# after one second while timeout is monitoring it.
+			out=$(timeout -k 1 "$_anvil_tmo" emacsclient "$@" 2>"$stderr_file")
 		elif command -v perl >/dev/null 2>&1; then
 			out=$(perl -e 'alarm shift @ARGV; exec @ARGV' \
 				"$_anvil_tmo" emacsclient "$@" 2>"$stderr_file")
