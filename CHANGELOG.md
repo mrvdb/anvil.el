@@ -47,6 +47,10 @@ also includes the July 2026 master wave that followed v1.3.0.
 
 ### Fixed
 
+- Reads the correct `server-execute` dontkill argument on Emacs 30+;
+  regression fixtures now use the runtime's actual argument positions.
+- Marks externally supplied mu4e search, list and read JSON content with
+  `untrusted-email-content` boundaries so consumers can treat it as data.
 - Avoids stale standalone tool schemas across module sets and uses live
   module registries to serve optional database-backed tools.
 - Fixes NeLisp v1.2.0 bootstrap, SQLite compatibility, and MCP framing
