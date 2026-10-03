@@ -16,11 +16,24 @@ from contextlib import contextmanager
 def alive(pid):
     try:
         os.kill(pid, 0)
-        # A zombie cannot retain descriptors or execute code; count it dead.
-        stat = pathlib.Path(f"/proc/{pid}/stat").read_text().split()
-        return len(stat) < 3 or stat[2] != "Z"
-    except (ProcessLookupError, FileNotFoundError, PermissionError):
+        stat_file = pathlib.Path(f"/proc/{pid}/stat")
+        if stat_file.exists():
+            # A zombie cannot retain descriptors or execute code.
+            stat = stat_file.read_text().split()
+            return len(stat) < 3 or stat[2] != "Z"
+        ps = shutil.which("ps")
+        if ps:
+            result = subprocess.run([ps, "-o", "stat=", "-p", str(pid)],
+                                    capture_output=True, text=True)
+            if result.returncode != 0:
+                return True
+            state = result.stdout.strip()
+            return not state.startswith("Z")
+        return True
+    except (ProcessLookupError, FileNotFoundError):
         return False
+    except PermissionError:
+        return True
 
 
 def frame(body):
@@ -72,15 +85,20 @@ def main():
     ap.add_argument("--script", required=True, type=pathlib.Path)
     ap.add_argument("--baseline", action="store_true")
     ap.add_argument("--force-cleanup-check", action="store_true")
+    ap.add_argument("--backend", choices=("gnu", "perl"), default="gnu")
     args = ap.parse_args()
     script = args.script.resolve()
     timeout = shutil.which("timeout")
-    if platform.system() != "Linux" or not timeout:
-        print("SKIP GNU timeout contract requires Linux coreutils")
-        return
-    version = subprocess.run([timeout, "--version"], capture_output=True, text=True).stdout
-    if "GNU coreutils" not in version:
-        print("SKIP GNU timeout contract requires Linux coreutils")
+    if args.backend == "gnu":
+        if platform.system() != "Linux" or not timeout:
+            print("SKIP GNU timeout contract requires Linux coreutils")
+            return
+        version = subprocess.run([timeout, "--version"], capture_output=True, text=True).stdout
+        if "GNU coreutils" not in version:
+            print("SKIP GNU timeout contract requires Linux coreutils")
+            return
+    elif not shutil.which("perl"):
+        print("SKIP Perl timeout contract requires Perl")
         return
     bash = shutil.which("bash")
     if not bash:
@@ -89,8 +107,21 @@ def main():
     processes = []
     pid_file = [None]
     with managed_tempdir(processes, pid_file) as root:
+        run_script = script
+        if args.backend == "perl":
+            run_script = root / "anvil-stdio-installed.sh"
+            shutil.copy2(script, run_script)
         bin_dir = root / "bin"
         bin_dir.mkdir()
+        path_dir = bin_dir
+        if args.backend == "perl":
+            path_dir = root / "perl-path"
+            path_dir.mkdir()
+            for name in ("awk", "base64", "cut", "date", "dirname", "env", "grep", "head",
+                         "perl", "ps", "python3", "rm", "sed", "sleep", "tr", "wc"):
+                executable = shutil.which(name)
+                if executable:
+                    (path_dir / name).symlink_to(executable)
         state = root / "state"
         log = root / "calls.jsonl"
         pids = root / "pids"
@@ -114,11 +145,26 @@ if method == "hang":
     child = os.fork()
     if child == 0:
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        signal.signal(signal.SIGALRM, signal.SIG_IGN)
         with (root / "pids").open("a") as f: f.write(str(os.getpid()) + "\\n")
         while True: time.sleep(1)
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    signal.signal(signal.SIGALRM, signal.SIG_IGN)
     with (root / "pids").open("a") as f: f.write(str(os.getpid()) + "\\n")
     while True: time.sleep(1)
+if method == "orphan":
+    read_fd, write_fd = os.pipe()
+    child = os.fork()
+    if child == 0:
+        os.close(read_fd)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        with (root / "pids").open("a") as f: f.write(str(os.getpid()) + "\\n")
+        os.write(write_fd, b"1")
+        os.close(write_fd)
+        while True: time.sleep(1)
+    os.close(write_fd)
+    os.read(read_fd, 1)
+    os.close(read_fd)
 if method == "retry":
     n = int((root / "state").read_text())
     (root / "state").write_text(str(n + 1))
@@ -140,13 +186,16 @@ print('"' + encoded + '"')
 ''')
         client.chmod(0o755)
         env = os.environ.copy()
-        env.update(PATH=str(bin_dir) + os.pathsep + env.get("PATH", ""),
+        path = str(bin_dir) + os.pathsep + str(path_dir)
+        if args.backend == "gnu":
+            path += os.pathsep + env.get("PATH", "")
+        env.update(PATH=path,
                    CASE_ROOT=str(root), ANVIL_EMACSCLIENT_TIMEOUT="0.15",
                    ANVIL_EMACSCLIENT_RETRY_MAX="2", ANVIL_EMACSCLIENT_RETRY_DELAY_MS="0")
 
         def run(data, framed=False, timeout_value="0.15", init=False, force_fail=False):
             env["ANVIL_EMACSCLIENT_TIMEOUT"] = timeout_value
-            cmd = [str(script)]
+            cmd = [str(run_script)]
             if init:
                 cmd += ["--init-function=init-fn", "--stop-function=stop-fn"]
             start = time.monotonic()
@@ -189,6 +238,7 @@ print('"' + encoded + '"')
         elif args.baseline:
             # The pre-patch implementation must hang past the outer watchdog.
             data = (request("hang") + "\n" + request("after", 2) + "\n").encode()
+            env["ANVIL_EMACSCLIENT_TIMEOUT"] = "1"
             proc = subprocess.Popen([bash, str(script)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE, env=env, start_new_session=True)
             processes.append(proc)
@@ -202,6 +252,12 @@ print('"' + encoded + '"')
                     try: os.kill(pid, signal.SIGKILL)
                     except ProcessLookupError: pass
                 proc.communicate(timeout=2)
+                ids = list(map(int, pids.read_text().splitlines())) if pids.exists() else []
+                for _ in range(40):
+                    if all(not alive(pid) for pid in ids): break
+                    time.sleep(0.05)
+                check(len(ids) == 2 and all(not alive(pid) for pid in ids),
+                      f"baseline cleanup leaked client group: {[(pid, alive(pid)) for pid in ids]}")
             passed += 1
         else:
             # Timeout notification is silent; bridge remains usable, both wire modes.
@@ -240,6 +296,31 @@ print('"' + encoded + '"')
                 check(len(ids) == 4 and all(not alive(pid) for pid in ids),
                       f"TERM-resistant process survived: {[(pid, alive(pid)) for pid in ids]}")
                 passed += 2
+            if args.backend == "perl":
+                # Fractional timeout above and integer timeout here both
+                # bound a TERM and ALRM-resistant process group.
+                previous_ids = len(pids.read_text().splitlines())
+                rc, out, _, elapsed = run((request("hang", 8) + "\n").encode(), timeout_value="1")
+                check(rc == 0 and b"Bridge synthetic error" in out and b"rc=124" in out,
+                      "integer timeout response mismatch")
+                check(1.8 <= elapsed < 4.0, f"integer timeout duration was {elapsed:.2f}s")
+                ids = list(map(int, pids.read_text().splitlines()))[previous_ids:]
+                check(len(ids) == 2 and all(not alive(pid) for pid in ids),
+                      f"integer timeout leaked process group: {[(pid, alive(pid)) for pid in ids]}")
+                passed += 2
+                previous_ids = len(pids.read_text().splitlines())
+                rc, out, _, elapsed = run((request("orphan", 9) + "\n" +
+                                           request("after", 13) + "\n").encode())
+                expected = [
+                    {"jsonrpc": "2.0", "id": 9, "result": {"method": "orphan"}},
+                    {"jsonrpc": "2.0", "id": 13, "result": {"method": "after"}},
+                ]
+                check(rc == 0 and [json.loads(x) for x in out.splitlines()] == expected
+                      and elapsed < 3.0, "orphan response or subsequent request failed")
+                ids = list(map(int, pids.read_text().splitlines()))[previous_ids:]
+                check(len(ids) == 1 and all(not alive(pid) for pid in ids),
+                      f"orphan holding stdout survived: {[(pid, alive(pid)) for pid in ids]}")
+                passed += 2
             # Retry success, init/stop counts, and timeout=0 path.
             state.write_text("0")
             data = (request("retry", 3) + "\n" + request("plain", 4) + "\n").encode()
@@ -265,6 +346,26 @@ print('"' + encoded + '"')
             rc, out, _, _ = run((request("plain", 5) + "\n").encode(), timeout_value="0")
             check(rc == 0 and b'"id":5' in out, "timeout=0 bypass failed")
             passed += 1
+            if args.backend == "perl":
+                # Invalid timeout/backend setups fail before dispatching.
+                call_count = len(log.read_text().splitlines())
+                rc, out, _, _ = run((request("plain", 10) + "\n").encode(), timeout_value="1e2")
+                check(rc == 0 and b"rc=69" in out and len(log.read_text().splitlines()) == call_count,
+                      "malformed timeout was dispatched")
+                passed += 1
+                perl_link = path_dir / "perl"
+                perl_link.unlink()
+                call_count = len(log.read_text().splitlines())
+                rc, out, _, _ = run((request("plain", 11) + "\n").encode(), timeout_value="1")
+                check(rc == 0 and b"rc=69" in out and
+                      len(log.read_text().splitlines()) == call_count,
+                      "missing Perl timeout backend dispatched the client")
+                passed += 1
+                rc, out, _, _ = run((request("plain", 12) + "\n").encode(), timeout_value="0")
+                check(rc == 0 and b'"id":12' in out and
+                      len(log.read_text().splitlines()) == call_count + 1,
+                      "timeout=0 did not bypass the missing supervisor")
+                passed += 1
     print(f"PASS {passed} checks")
 
 
