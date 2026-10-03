@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-03
+
+Release of the develop line through 2026-10-03 on `master`. This release
+also includes the July 2026 master wave that followed v1.3.0.
+
+### Added
+
+- **Session event search and restore references** — optional Claude Code
+  session tools index captured events with SQLite FTS5 and a CJK fallback.
+  Safe hook merging preserves other tools' hooks, and PreCompact can save a
+  reference snapshot for later restoration.
+- **NeLisp v1.2.0 standalone runtime** — adds NDJSON and Content-Length
+  framing, cache prewarming, a TCP loopback daemon, and optional
+  SQLite-backed tools when built with the dynamic reader and configured
+  modules. Linux DB-backed use was exercised under WSL and Windows stdio
+  was exercised; Windows TCP and macOS standalone operation are unverified.
+  Isolated Linux SQLite queries passed both framing modes and ordered row
+  truncation. The fallback cursor materializes query results, so response
+  row caps do not bound database reads or memory use; working native cursors
+  remain unchanged. Use matching NeLisp and `nelisp-emacs-lib` revisions.
+- **Stateless MCP requests** — serves the 2026-07-28 stateless request form
+  alongside initialize-based clients.
+- **Memory updates and scan transactions** — supports in-place memory edits
+  and transactional scan handling.
+- **Worker and process controls** — propagates shared deadlines, bounds
+  evaluation results and errors, and cleans up stdio process groups after
+  timeout.
+- **Fusion extensions** — adds Sonnet-solo panels, agentic-member permission
+  passthrough, deeper multi-round critique, and router calibration reports
+  that propose changes without applying them.
+- **Wanderlust and CAD extensions** — adds OAuth, Graph sync, and local
+  filters to Wanderlust; adds standalone SVG fast paths and native file I/O
+  to CAD.
+- **July master wave** — adds verifier-grounded fusion, cascade routing,
+  execution-checked candidates, plan fusion, verified trajectories, and
+  measured token-saving tools. See the README's Current Release Highlights
+  for the scoped evaluation results and usage guide.
+
+### Fixed
+
+- Avoids stale standalone tool schemas across module sets and uses live
+  module registries to serve optional database-backed tools.
+- Fixes NeLisp v1.2.0 bootstrap, SQLite compatibility, and MCP framing
+  issues across the standalone launcher and daemon.
+- Preserves existing Claude Code hooks while installing session capture;
+  corrects session command classification and supports indexed recent-event
+  and ranked-search paths.
+- Makes worker timeout cleanup and result handling bounded, and improves
+  Wanderlust filtering and synchronization behavior.
+
 ### Changed
 
 - **`bin/anvil-runtime` follows NeLisp v1.2.0** — the standalone
@@ -593,6 +643,8 @@ Initial tagged release — see git history for details.
 
 Project inception.
 
+[Unreleased]: https://github.com/zawatton/anvil.el/compare/v1.4.0...master
+[1.4.0]: https://github.com/zawatton/anvil.el/releases/tag/v1.4.0
 [0.3.1]: https://github.com/zawatton21/anvil.el/releases/tag/v0.3.1
 [0.3.0]: https://github.com/zawatton21/anvil.el/releases/tag/v0.3.0
 [0.2.1]: https://github.com/zawatton21/anvil.el/releases/tag/v0.2.1
