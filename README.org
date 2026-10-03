@@ -459,6 +459,17 @@ still needs a complete scan. The cap does not bound encoded MCP response size or
 time. Set =anvil-file-max-inline-read-bytes= to nil, zero or a negative
 integer only when explicitly choosing legacy full-file reads.
 
+Successful inline tool-result text also defaults to a 2 MiB limit after
+projecting UTF-8 JSON string escaping, excluding surrounding quotes. The
+server checks normalized results before and after disclosure processing;
+oversized content is replaced with a fixed error before payload telemetry.
+Use paginated, filtered, tee or asynchronous interfaces for larger results.
+Set =anvil-server-max-inline-result-bytes= to nil or a non-positive integer
+to explicitly restore legacy behavior. The cap applies to successful text;
+its fixed rejection diagnostic has a separate bound, and existing error
+paths and complete response frames are outside it. Tool execution and rich
+result normalization can still allocate large values before this check.
+
 ** Batch edits into one round trip
 
 When an agent makes several edits to the same file, each becomes a
