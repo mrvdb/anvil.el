@@ -1,8 +1,11 @@
 # CI acceptance and runtime selection
 
 The smoke, full ERT, release-audit, and installer workflows select Emacs
-31.1. Their operating-system coverage and installer behavior are unchanged;
-this selection does not raise the package's declared compatibility floor.
+31.1. Windows jobs download the official GNU `emacs-31.1.zip` archive through
+the shared `.github/actions/setup-emacs-windows` composite action and verify
+the runtime reports exactly `31.1`. Their operating-system coverage and
+installer behavior are unchanged; this selection does not raise the package's
+declared compatibility floor.
 
 Bisect subprocesses default to the running Emacs executable, resolved from
 its invocation directory. `anvil-bisect-emacs-program` remains customizable.

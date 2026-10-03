@@ -14,6 +14,7 @@ on:
       - 'install.ps1'
       - 'scripts/**'
       - 'docs/QUICKSTART.org'
+      - '.github/actions/setup-emacs-windows/**'
       - '.github/workflows/install-test.yml'
   pull_request:
     branches: ['**']
@@ -22,6 +23,7 @@ on:
       - 'install.ps1'
       - 'scripts/**'
       - 'docs/QUICKSTART.org'
+      - '.github/actions/setup-emacs-windows/**'
       - '.github/workflows/install-test.yml'
   workflow_dispatch:
 
@@ -54,9 +56,7 @@ jobs:
 
       - name: Set up Emacs (Windows)
         if: runner.os == 'Windows'
-        uses: jcs090218/setup-emacs-windows@master
-        with:
-          version: '31.1'
+        uses: ./.github/actions/setup-emacs-windows
 
       # -----------------------------------------------------------------
       # Linux + macOS
