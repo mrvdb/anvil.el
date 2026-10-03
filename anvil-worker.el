@@ -546,29 +546,38 @@ file\" (issue #16)."
       (list "-f" server-file)
     (list "-s" server-file)))
 
-(defun anvil-worker--probe-emacsclient (server-file)
+(defun anvil-worker--probe-emacsclient (server-file &optional dispatch-deadline)
   "Return non-nil if `emacsclient' liveness probe on SERVER-FILE exits 0 in time.
 The probe is run asynchronously via `make-process' and hard-killed
 after `anvil-worker-alive-check-timeout' seconds.  This prevents a
 stale SERVER-FILE pointing at a reused TCP port from blocking the
 caller indefinitely."
-  (let* ((buf (generate-new-buffer " *anvil-worker-probe*"))
-         (proc (make-process
-                :name "anvil-worker-probe"
-                :buffer buf
-                :command (append (list "emacsclient")
-                                 (anvil-worker--emacsclient-server-args
-                                  server-file)
-                                 (list "-e" "t"))
-                :noquery t
-                :connection-type 'pipe))
-         (deadline (+ (float-time) anvil-worker-alive-check-timeout))
+  (let* ((deadline (+ (float-time)
+                      (if dispatch-deadline
+                          (max 0.0
+                               (min anvil-worker-alive-check-timeout
+                                    (- dispatch-deadline (float-time))))
+                        anvil-worker-alive-check-timeout)))
+         (buf nil)
+         (proc nil)
          (alive nil))
     (unwind-protect
-        (progn
+        (when (< (float-time) deadline)
+          (setq buf (generate-new-buffer " *anvil-worker-probe*"))
+          (setq proc
+                (make-process
+                 :name "anvil-worker-probe"
+                 :buffer buf
+                 :command (append (list "emacsclient")
+                                  (anvil-worker--emacsclient-server-args
+                                   server-file)
+                                  (list "-e" "t"))
+                 :noquery t
+                 :connection-type 'pipe))
           (while (and (process-live-p proc)
                       (< (float-time) deadline))
-            (accept-process-output proc 0.1 nil t))
+            (accept-process-output
+             proc (min 0.1 (max 0.0 (- deadline (float-time)))) nil t))
           (if (process-live-p proc)
               (progn
                 (delete-process proc)
@@ -578,6 +587,7 @@ caller indefinitely."
                          (file-name-nondirectory server-file)
                          anvil-worker-alive-check-timeout)))
             (setq alive (= 0 (process-exit-status proc)))))
+      (when (and proc (process-live-p proc)) (delete-process proc))
       (when (buffer-live-p buf) (kill-buffer buf)))
     alive))
 
@@ -602,7 +612,7 @@ servers are checked via `server-running-p' on the socket basename."
             (null (process-attributes pid))))
     (not (server-running-p (file-name-nondirectory server-file)))))
 
-(defun anvil-worker--worker-alive-p (worker)
+(defun anvil-worker--worker-alive-p (worker &optional dispatch-deadline)
   "Return non-nil if WORKER plist is reachable.
 Performs the same cheap checks as `anvil-worker--quick-alive-p'
 followed by a bounded `emacsclient' probe, and deletes a stale
@@ -616,7 +626,8 @@ server file as a side-effect."
        'stale-server-file
        (file-name-nondirectory server-file))
       nil)
-     (t (anvil-worker--probe-emacsclient server-file)))))
+     ((and dispatch-deadline (>= (float-time) dispatch-deadline)) nil)
+     (t (anvil-worker--probe-emacsclient server-file dispatch-deadline)))))
 
 (defun anvil-worker-alive-p (&optional index lane)
   "Return non-nil if worker at INDEX (default 0) of LANE (default :read) is alive.
@@ -750,14 +761,25 @@ while four Emacs daemons are starting up."
 
 ;;; Dispatch — pick a worker
 
-(defun anvil-worker--pick-in-lane (lane)
+(defun anvil-worker--pick-in-lane (lane &optional dispatch-deadline)
   "Pick the next available worker in LANE, or nil if nothing alive.
 Round-robin within LANE, preferring non-busy.  Falls back to a
 busy-but-alive worker when every lane member is occupied."
   (let* ((vec (anvil-worker--lane-pool lane))
          (size (and vec (length vec)))
          (start (or (plist-get anvil-worker--dispatch-index lane) 0))
-         (chosen nil))
+         (chosen nil)
+         (checked (make-hash-table :test 'eq)))
+    (cl-labels ((alive-p (worker)
+                  (let ((cached (gethash worker checked :missing)))
+                    (if (not (eq cached :missing))
+                        (not (eq cached :dead))
+                      (when (or (null dispatch-deadline)
+                                (< (float-time) dispatch-deadline))
+                        (let ((alive (anvil-worker--worker-alive-p
+                                      worker dispatch-deadline)))
+                          (puthash worker (if alive :alive :dead) checked)
+                          alive))))))
     (when (and vec (> size 0))
       ;; Prefer non-busy + alive.
       (dotimes (off size)
@@ -765,7 +787,7 @@ busy-but-alive worker when every lane member is occupied."
                (worker (aref vec idx)))
           (when (and (not chosen)
                      (not (plist-get worker :busy))
-                     (anvil-worker--worker-alive-p worker))
+                     (alive-p worker))
             (setq chosen worker))))
       ;; Fallback: any alive worker (even busy).
       (unless chosen
@@ -773,25 +795,29 @@ busy-but-alive worker when every lane member is occupied."
           (let* ((idx (% (+ start off) size))
                  (worker (aref vec idx)))
             (when (and (not chosen)
-                       (anvil-worker--worker-alive-p worker))
+                       (alive-p worker))
               (setq chosen worker)))))
       (when chosen
         (setq anvil-worker--dispatch-index
               (plist-put anvil-worker--dispatch-index lane
                          (% (1+ (plist-get chosen :index)) size)))))
-    chosen))
+    chosen)))
 
-(defun anvil-worker--pick-fallback-in-lane (lane)
+(defun anvil-worker--pick-fallback-in-lane (lane &optional dispatch-deadline)
   "Spawn the first worker in LANE and wait up to `anvil-worker-spawn-wait'.
 Returns the worker plist if it came alive, else nil."
-  (let ((worker (anvil-worker--worker lane 0)))
-    (when worker
+  (let* ((worker (anvil-worker--worker lane 0))
+         (deadline (or dispatch-deadline
+                       (+ (float-time) anvil-worker-spawn-wait)))
+         (alive nil))
+    (when (and worker (< (float-time) deadline))
       (anvil-worker--spawn-worker worker)
-      (let ((deadline (+ (float-time) anvil-worker-spawn-wait)))
-        (while (and (not (anvil-worker--worker-alive-p worker))
-                    (< (float-time) deadline))
-          (sit-for 0.1)))
-      (and (anvil-worker--worker-alive-p worker) worker))))
+      (while (and (< (float-time) deadline)
+                  (not (setq alive
+                             (anvil-worker--worker-alive-p
+                              worker deadline))))
+        (sit-for (min 0.1 (max 0.0 (- deadline (float-time))))))
+      (and alive worker))))
 
 (defun anvil-worker--pick-worker (&optional kind expression)
   "Pick a worker for a tool call.
@@ -807,9 +833,15 @@ lane is tried first and the remaining lanes act as fallbacks."
                       kind))
          ;; Try effective lane first, then the rest in canonical order.
          (try-order (cons effective
-                          (cl-remove effective anvil-worker--lanes))))
-    (or (cl-some #'anvil-worker--pick-in-lane try-order)
-        (cl-some #'anvil-worker--pick-fallback-in-lane try-order))))
+                          (cl-remove effective anvil-worker--lanes)))
+         (deadline (+ (float-time) anvil-worker-spawn-wait)))
+    (or (cl-some (lambda (lane)
+                   (anvil-worker--pick-in-lane lane deadline))
+                 try-order)
+        (cl-some (lambda (lane)
+                   (and (< (float-time) deadline)
+                        (anvil-worker--pick-fallback-in-lane lane deadline)))
+                 try-order))))
 
 ;;; Heavy-op detection
 
