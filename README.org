@@ -470,6 +470,18 @@ its fixed rejection diagnostic has a separate bound, and existing error
 paths and complete response frames are outside it. Tool execution and rich
 result normalization can still allocate large values before this check.
 
+Automatic harness failure telemetry also bounds error data before rendering.
+It limits visited elements, nesting and characters. Oversized data is truncated
+or replaced; cyclic or opaque values use omission markers. Stored error
+messages default to 4,096 characters and raw context to 500; configure
+=anvil-harness-telemetry-error-message-max-chars= and
+=anvil-harness-telemetry-raw-context-max-chars= for smaller fields. Zero keeps
+the field empty, invalid settings use finite defaults, and larger settings
+are clamped to 4,096 characters. Classification uses bounded message text and
+retains the existing rule order. This applies to automatic error recording;
+direct manual recording, server error formatting and cancellation remain
+separate.
+
 ** Batch edits into one round trip
 
 When an agent makes several edits to the same file, each becomes a
