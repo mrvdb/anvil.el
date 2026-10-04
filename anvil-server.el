@@ -49,6 +49,7 @@
 
 (require 'cl-lib)
 (require 'json)
+(require 'anvil-bounded-data)
 (require 'anvil-server-metrics)
 
 ;; `anvil-offload' is an optional module — loaded on demand in
@@ -127,7 +128,9 @@ the whole message back into the model's context.  The signal data of
 an unexpected error can carry arbitrarily large objects (a buffer's
 text, a populated hash table), so unbounded error text can exceed the
 model's context window on its own.  Longer messages are cut and end
-with a trailer stating the original length.  Nil disables the cap."
+with a trailer stating the original length.  Nil disables only the final
+text cap; error data is still snapshotted with finite node, depth, and
+character budgets before printing."
   :type '(choice (const :tag "Unlimited" nil) integer)
   :group 'anvil-server)
 
@@ -2035,15 +2038,23 @@ reader how to get a smaller result."
 
 (defun anvil-server-format-tool-error (err)
   "Return the \"Error: ...\" tool message for condition ERR.
-The signal data is printed with bounded `print-length' and
-`print-level' so a huge object carried by ERR is elided while it is
-printed rather than after, then the text is capped at
-`anvil-server-tool-error-max-chars'."
-  (anvil-server-truncate-text
-   (let ((print-length 64)
-         (print-level 8))
-     (format "Error: %S" err))
-   anvil-server-tool-error-max-chars))
+The data is snapshotted with finite budgets before printing, then rendered
+with bounded `print-length' and `print-level'.  The final text is capped at
+`anvil-server-tool-error-max-chars'; disabling that cap does not disable the
+snapshot budgets.  Large data may be elided or replaced by markers."
+  (let* ((snapshot
+          (let ((anvil-bounded-data--snapshot-node-limit 512)
+                (anvil-bounded-data--snapshot-depth-limit 8)
+                (anvil-bounded-data--snapshot-char-limit 4096))
+            (plist-get (anvil-bounded-data--bounded-snapshot err) :value)))
+         (text
+          (let ((print-length 64)
+                (print-level 8)
+                (print-circle t)
+                (print-gensym nil)
+                (float-output-format nil))
+            (format "Error: %S" snapshot))))
+    (anvil-server-truncate-text text anvil-server-tool-error-max-chars)))
 
 (defmacro anvil-server-with-error-handling (&rest body)
   "Execute BODY with automatic error handling for MCP tools.
