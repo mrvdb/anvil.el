@@ -6,6 +6,24 @@
 (require 'cl-lib)
 (require 'anvil-harness-telemetry)
 
+(ert-deftest anvil-ht-bounds-snapshot-forwards-dynamic-private-limits ()
+  (let ((anvil-harness-telemetry--snapshot-node-limit 3)
+        (anvil-harness-telemetry--snapshot-depth-limit 2)
+        (anvil-harness-telemetry--snapshot-char-limit 17)
+        (captured nil)
+        (sentinel (list :sentinel t)))
+    (cl-letf (((symbol-function 'anvil-bounded-data--bounded-snapshot)
+               (lambda (value &optional maxchars)
+                 (setq captured
+                       (list value maxchars
+                             anvil-bounded-data--snapshot-node-limit
+                             anvil-bounded-data--snapshot-depth-limit
+                             anvil-bounded-data--snapshot-char-limit))
+                 sentinel)))
+      (should (eq (anvil-harness-telemetry--bounded-snapshot 'input 11)
+                  sentinel)))
+    (should (equal captured '(input 11 3 2 17)))))
+
 (ert-deftest anvil-ht-bounds-raw-context-does-not-render-original-error ()
   "Raw context must be assembled within a bounded renderer."
   (let ((hostile (list 'error (make-string 1000000 ?x)))

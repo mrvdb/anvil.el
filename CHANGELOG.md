@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Snapshot arbitrary tool error data before raw `Error: ...` rendering, using
+  finite node, depth and leaf-character budgets even when final text truncation
+  is disabled. Share the pure data snapshot with harness telemetry while
+  preserving telemetry's private API and dynamically bound limits. Generic
+  server error formatting and other error/transport paths remain separate.
 - Bound automatic harness telemetry error rendering before printing arbitrary
   error data. Limit traversal work, nesting and characters; truncate or replace
   oversized data and use omission markers for cyclic or opaque values. Bound

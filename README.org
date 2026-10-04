@@ -479,7 +479,18 @@ messages default to 4,096 characters and raw context to 500; configure
 the field empty, invalid settings use finite defaults, and larger settings
 are clamped to 4,096 characters. Classification uses bounded message text and
 retains the existing rule order. This applies to automatic error recording;
-direct manual recording, server error formatting and cancellation remain
+direct manual recording, other server error paths and cancellation remain
+separate.
+
+Raw errors caught by =anvil-server-with-error-handling= are also copied before
+printing: at most 512 visited values, depth 8 and 4,096 leaf characters.
+Large strings are truncated; cyclic or opaque values use omission markers.
+The pure snapshot implementation is shared with telemetry. The existing
+=anvil-server-tool-error-max-chars= setting controls final text truncation;
+setting it to nil disables that final cap while the independent data-copy
+limits remain finite. Small ordinary =Error: ...= messages retain their text.
+Generic server error formatting, explicit tool-throw text, lazy loaders,
+quit/invalid-parameter/not-found responses and transport containment remain
 separate.
 
 ** Batch edits into one round trip
