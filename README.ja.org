@@ -78,7 +78,28 @@ Anvil の背景 - 何故開発するに至ったのか — [[file:STORY.ja.org][
 
 * 現在のリリースハイライト
 
-v1.4.0 (2026-10-03) brings the develop line to =master= with indexed
+The v1.4.1 release candidate is unpublished. It adds bounded handling for
+selected file reads and successful inline results, bounded diagnostic and
+telemetry traversal, and safer worker cleanup after successful termination.
+The byte limits apply at their documented boundaries; they do not bound
+arbitrary execution or complete transport frames. The v1.4.0 feature baseline
+and July master wave remain available below.
+
+| Area | What changed |
+|------+--------------|
+| File reads | Default 1 MiB cap on selected raw bytes; pagination reads bounded chunks. Nil or non-positive legacy settings retain prior behavior. |
+| Inline results | Default 2 MiB budget for projected escaped UTF-8 JSON-string bytes on normalized successful results, checked before and after disclosure. Execution, result construction, error paths, and full frames are outside this limit. |
+| Diagnostics and telemetry | Finite traversal, depth, and leaf budgets apply before formatting. Raw tool-error snapshots are shared with telemetry; ordinary codes and metrics are preserved. Other error and transport paths are not all bounded. |
+| Worker cleanup | After a successful kill request, all identically owned slots are detached synchronously, without waiting for the sentinel. Kill errors preserve ownership; raw-response and pool diagnostics are retained. |
+
+For larger file reads, pass =offset="0"= and =limit="200"=, reducing the limit
+if the selected page is too large. Use paginated, filtered, tee, or asynchronous
+interfaces for larger results. Set =anvil-file-max-inline-read-bytes= or
+=anvil-server-max-inline-result-bytes= to nil or a non-positive integer only
+to restore the corresponding legacy behavior; other error and transport paths
+are not all bounded.
+
+Previous release: v1.4.0 (2026-10-03) brought the develop line to =master= with indexed
 Claude Code session recall, NeLisp v1.2.0 standalone runtime support,
 stateless MCP requests, bounded worker execution, memory updates, and
 new fusion, Wanderlust, and CAD capabilities. Details: [[file:CHANGELOG.md][CHANGELOG.md]]

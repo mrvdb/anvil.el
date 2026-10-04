@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.1] - Unreleased
+
 ### Fixed
 
 - Snapshot arbitrary tool error data before raw `Error: ...` rendering, using
@@ -34,6 +36,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and total-line counts can require two full scans. Nil or non-positive
   integer `anvil-file-max-inline-read-bytes`
   explicitly restores legacy reads; the cap does not bound encoded MCP size.
+- Bound traversal and nesting of diagnostic and telemetry data before
+  formatting, and share raw tool-error snapshots with telemetry. Ordinary
+  error codes and telemetry metrics remain intact; generic server errors and
+  other error/transport paths are not all bounded by these changes.
+- Route condition, quit, resource, and hook errors through bounded handling
+  while preserving ordinary error codes and metrics.
+- After a successful kill request, detach all identically owned slots
+  synchronously without waiting for the sentinel. Kill errors preserve
+  ownership; raw-response and pool diagnostics are retained. This does not
+  establish a fix for arbitrary worker death or prove a historical macOS cause.
 
 ## [1.4.0] - 2026-10-03
 
@@ -676,6 +688,7 @@ Initial tagged release — see git history for details.
 Project inception.
 
 [Unreleased]: https://github.com/zawatton/anvil.el/compare/v1.4.0...master
+[1.4.1]: https://github.com/zawatton/anvil.el/compare/v1.4.0...release/v1.4.1
 [1.4.0]: https://github.com/zawatton/anvil.el/releases/tag/v1.4.0
 [0.3.1]: https://github.com/zawatton21/anvil.el/releases/tag/v0.3.1
 [0.3.0]: https://github.com/zawatton21/anvil.el/releases/tag/v0.3.0

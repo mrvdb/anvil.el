@@ -23,7 +23,15 @@ run elisp, query SQLite, and more *through Emacs primitives* instead
 of generic =sed= / =grep= / =read-whole-file= round-trips.  That
 swap is where the token savings come from.
 
-v1.4.0 brings the develop line through 2026-10-03 to =master=. It adds
+v1.4.1 is an unpublished release candidate. It adds bounded handling for
+selected file reads and successful inline results, bounded diagnostic and
+telemetry traversal, and safer worker cleanup after successful termination.
+These changes build on the v1.4.0 feature set: searchable Claude Code session
+events and PreCompact reference snapshots, in-place memory updates, stateless
+MCP requests, worker deadlines, a NeLisp v1.2.0 standalone path, and expanded
+fusion capabilities. The Emacs daemon remains the full-featured path.
+
+v1.4.0 brought the develop line through 2026-10-03 to =master=. It adds
 searchable Claude Code session events and PreCompact reference
 snapshots, in-place memory updates, stateless MCP requests, worker
 deadlines and timeout cleanup, and a NeLisp v1.2.0 standalone path
@@ -37,7 +45,28 @@ the Emacs daemon remains the full-featured path.
 
 * Current Release Highlights
 
-Release v1.4.0 includes the July master wave and the subsequent
+The v1.4.1 release candidate is unpublished and is based on develop PRs 71–79.
+The changes add bounded handling for file reads, successful inline results,
+diagnostic snapshots, and telemetry rendering, plus safer worker cleanup.
+The byte limits apply at their documented boundaries; they do not bound
+arbitrary execution or complete transport frames. The v1.4.0 feature baseline
+and July master wave remain available below.
+
+| Area | What changed |
+|------+--------------|
+| File reads | Default 1 MiB cap on selected raw bytes; pagination reads bounded chunks. Nil or non-positive legacy settings retain prior behavior. |
+| Inline results | Default 2 MiB budget for projected escaped UTF-8 JSON-string bytes on normalized successful results, checked before and after disclosure. Execution, result construction, error paths, and full frames are outside this limit. |
+| Diagnostics and telemetry | Finite traversal, depth, and leaf budgets apply before formatting. Raw tool-error snapshots are shared with telemetry; ordinary codes and metrics are preserved. Other error and transport paths are not all bounded. |
+| Worker cleanup | After a successful kill request, all identically owned slots are detached synchronously, without waiting for the sentinel. Kill errors preserve ownership; raw-response and pool diagnostics are retained. |
+
+For larger file reads, pass =offset="0"= and =limit="200"=, reducing the limit
+if the selected page is too large. Use paginated, filtered, tee, or asynchronous
+interfaces for larger results. Set =anvil-file-max-inline-read-bytes= or
+=anvil-server-max-inline-result-bytes= to nil or a non-positive integer only
+to restore the corresponding legacy behavior; other error and transport paths
+are not all bounded.
+
+Previous release: v1.4.0 includes the July master wave and the subsequent
 develop work through 2026-10-03. The July fusion guide is at
 [[file:docs/FUSION-GUIDE.org][docs/FUSION-GUIDE.org]]. New develop additions include:
 
@@ -450,7 +479,7 @@ For org-mode refactors specifically, MCP-backed operations
 (section move, refile, split) run *10–20× cheaper in tokens* than
 their Read + Write equivalents.
 
-On develop after v1.4.0, =file-read= defaults to a 1 MiB raw-byte cap.
+In the v1.4.1 release candidate, =file-read= defaults to a 1 MiB raw-byte cap.
 For larger files, pass =offset="0"= and =limit="200"=; reduce the limit
 if the selected page also exceeds the cap. Pagination uses bounded chunks
 and retains only the selected page. Preserving automatic line-ending
