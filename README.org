@@ -23,7 +23,7 @@ run elisp, query SQLite, and more *through Emacs primitives* instead
 of generic =sed= / =grep= / =read-whole-file= round-trips.  That
 swap is where the token savings come from.
 
-v1.4.1 is an unpublished release candidate. It adds bounded handling for
+v1.4.1 (2026-10-04) adds bounded handling for
 selected file reads and successful inline results, bounded diagnostic and
 telemetry traversal, and safer worker cleanup after successful termination.
 These changes build on the v1.4.0 feature set: searchable Claude Code session
@@ -45,8 +45,7 @@ the Emacs daemon remains the full-featured path.
 
 * Current Release Highlights
 
-The v1.4.1 release candidate is unpublished and is based on develop PRs 71–79.
-The changes add bounded handling for file reads, successful inline results,
+Release v1.4.1 (2026-10-04) adds bounded handling for file reads, successful inline results,
 diagnostic snapshots, and telemetry rendering, plus safer worker cleanup.
 The byte limits apply at their documented boundaries; they do not bound
 arbitrary execution or complete transport frames. The v1.4.0 feature baseline
@@ -202,7 +201,7 @@ bin/anvil-runtime mcp serve
 
 ** Path B — Emacs integrated (recommended for Emacs users)
 
-For day-to-day Emacs users. Pin to v1.4.0 via your favourite
+For day-to-day Emacs users. Pin to v1.4.1 via your favourite
 package manager.
 
 *** Quick install (one command)
@@ -228,17 +227,17 @@ installed.
 #+begin_src emacs-lisp
 ;; async-installer
 (async-installer-git-add "https://github.com/zawatton/anvil.el.git"
-                         :tag "v1.4.0"
+                         :tag "v1.4.1"
                          :main "anvil.el")
 
 ;; or straight.el
 (straight-use-package
  '(anvil :type git :host github :repo "zawatton/anvil.el"
-         :branch "v1.4.0"))
+         :branch "v1.4.1"))
 
 ;; or elpaca
 (elpaca (anvil :host github :repo "zawatton/anvil.el"
-               :ref "v1.4.0"))
+               :ref "v1.4.1"))
 #+end_src
 
 After installing:
@@ -479,7 +478,7 @@ For org-mode refactors specifically, MCP-backed operations
 (section move, refile, split) run *10–20× cheaper in tokens* than
 their Read + Write equivalents.
 
-In the v1.4.1 release candidate, =file-read= defaults to a 1 MiB raw-byte cap.
+In v1.4.1, =file-read= defaults to a 1 MiB raw-byte cap.
 For larger files, pass =offset="0"= and =limit="200"=; reduce the limit
 if the selected page also exceeds the cap. Pagination uses bounded chunks
 and retains only the selected page. Preserving automatic line-ending
