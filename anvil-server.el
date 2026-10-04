@@ -49,6 +49,7 @@
 
 (require 'cl-lib)
 (require 'json)
+(require 'anvil-bounded-data)
 (require 'anvil-server-metrics)
 
 ;; `anvil-offload' is an optional module — loaded on demand in
@@ -127,7 +128,16 @@ the whole message back into the model's context.  The signal data of
 an unexpected error can carry arbitrarily large objects (a buffer's
 text, a populated hash table), so unbounded error text can exceed the
 model's context window on its own.  Longer messages are cut and end
-with a trailer stating the original length.  Nil disables the cap."
+with a trailer stating the original length.  Nil disables only the final
+text cap; error data is still snapshotted with finite node, depth, and
+character budgets before printing."
+  :type '(choice (const :tag "Unlimited" nil) integer)
+  :group 'anvil-server)
+
+(defcustom anvil-server-max-inline-result-bytes (* 2 1024 1024)
+  "Maximum escaped UTF-8 bytes of successful inline tool-result text.
+The two JSON string quote delimiters are excluded.  Nil, zero, or a negative
+integer disables the limit.  Other values fail closed."
   :type '(choice (const :tag "Unlimited" nil) integer)
   :group 'anvil-server)
 
@@ -192,6 +202,14 @@ legacy requests and never mutated."
 
 (defconst anvil-server-jsonrpc-error-internal -32603
   "JSON-RPC 2.0 Internal Error code.")
+
+(defconst anvil-server--inline-result-limit-error-text
+  "Inline tool result rejected: size limit configuration is invalid."
+  "Fixed content-free diagnostic returned for an invalid inline result limit.")
+
+(defconst anvil-server--inline-result-too-large-text
+  "Inline tool result rejected: output exceeds the configured size limit."
+  "Fixed content-free diagnostic returned for an oversized inline result.")
 
 ;;; Internal Constants
 
@@ -952,13 +970,42 @@ failed.  JSON-RPC 2.0 requires error responses to echo the request
 id; a client cannot match an `id: null' error against its pending
 request and may wait forever.")
 
+(defun anvil-server--condition-message (err)
+  "Return ERR's message after snapshotting it before native formatting.
+The snapshot uses independent node, depth, and character limits; the
+caller applies any final response cap separately."
+  (let* ((snapshot
+          (let ((anvil-bounded-data--snapshot-node-limit 512)
+                (anvil-bounded-data--snapshot-depth-limit 8)
+                (anvil-bounded-data--snapshot-char-limit 4096))
+            (anvil-bounded-data--bounded-snapshot err))))
+    (let ((anvil-bounded-data--snapshot-node-limit 512)
+          (anvil-bounded-data--snapshot-depth-limit 8)
+          (anvil-bounded-data--snapshot-char-limit 4096))
+      (plist-get (anvil-bounded-data--render-snapshot snapshot 4096 0)
+                 :message))))
+
+(defun anvil-server--condition-raw-context (err)
+  "Return ERR's bounded raw diagnostic context before printing.
+The snapshot and render limits bound diagnostic work independently of
+the final response cap."
+  (let* ((anvil-bounded-data--snapshot-node-limit 512)
+         (anvil-bounded-data--snapshot-depth-limit 8)
+         (anvil-bounded-data--snapshot-char-limit 4096)
+         (snapshot (anvil-bounded-data--bounded-snapshot err)))
+    (let ((anvil-bounded-data--snapshot-node-limit 512)
+          (anvil-bounded-data--snapshot-depth-limit 8)
+          (anvil-bounded-data--snapshot-char-limit 4096))
+      (plist-get (anvil-bounded-data--render-snapshot snapshot 0 4096)
+                 :raw-context))))
+
 (defun anvil-server--handle-error (err)
   "Handle error ERR in MCP process by logging and creating an error response.
 Returns a JSON-RPC error response string for internal errors."
   (anvil-server--jsonrpc-error
    anvil-server--current-request-id
    anvil-server-jsonrpc-error-internal
-   (format "Internal error: %s" (error-message-string err))))
+   (format "Internal error: %s" (anvil-server--condition-message err))))
 
 (defun anvil-server--validate-and-dispatch-request
     (request server-id)
@@ -1202,14 +1249,19 @@ METHOD-METRICS is used to track errors."
      (cl-incf (anvil-server-metrics-errors method-metrics))
      (anvil-server--jsonrpc-error
       id anvil-server-jsonrpc-error-internal
-      (format "Resource handler quit for %s: %S" uri err)))
+      (format "Resource handler quit for %s: %s"
+              (anvil-server-truncate-text
+               (anvil-server--condition-message uri) 128)
+              (anvil-server--condition-raw-context err))))
     ;; Handle any other error from the handler
     (error
      (anvil-server--metrics-bump (anvil-server-metrics-errors method-metrics))
      (anvil-server--jsonrpc-error
       id anvil-server-jsonrpc-error-internal
       (format "Error reading resource %s: %s"
-              uri (error-message-string err))))))
+              (anvil-server-truncate-text
+               (anvil-server--condition-message uri) 128)
+              (anvil-server--condition-message err))))))
 
 (defun anvil-server--handle-resources-read
     (id params method-metrics server-id)
@@ -1454,7 +1506,7 @@ main dispatch flow."
                             err tool-name source)
       (error
        (message "anvil-server: tool-error-hook failed: %s"
-                (error-message-string hook-err))))))
+                (anvil-server--condition-message hook-err))))))
 
 (defvar anvil-server-id-aliases nil
   "Alist mapping virtual server-ids to real server-ids.
@@ -1613,6 +1665,44 @@ SERVER-ID is resolved through `anvil-server-id-aliases'."
     (anvil-server--jsonrpc-response
      id `((resourceTemplates . ,template-list)))))
 
+(defun anvil-server--projected-json-string-bytes (text &optional stop-after)
+  "Return projected JSON-escaped UTF-8 bytes for TEXT, excluding quotes.
+When STOP-AFTER is a non-negative integer, stop once the count exceeds it.
+This projector does not call the JSON encoder or build an escaped copy."
+  (unless (stringp text)
+    (signal 'wrong-type-argument (list 'stringp text)))
+  (let ((index 0)
+        (total 0)
+        (multibyte (multibyte-string-p text)))
+    (catch 'done
+      (while (< index (length text))
+        (let ((character (aref text index)))
+          (setq total
+                (+ total
+                   (cond
+                    ((or (= character ?\") (= character ?\\)) 2)
+                    ((memq character '(8 9 10 12 13)) 2)
+                    ((< character 32) 6)
+                    ((and (not multibyte) (>= character 128)) 5)
+                    ((>= character #x200000) 5)
+                    ((< character #x80) 1)
+                    ((< character #x800) 2)
+                    ((< character #x10000) 3)
+                    (t 4))))
+          (setq index (1+ index))
+          (when (and (integerp stop-after) (>= stop-after 0)
+                     (> total stop-after))
+            (throw 'done total))))
+      total)))
+
+(defun anvil-server--inline-result-over-limit-p (text)
+  "Return non-nil if TEXT projects beyond the configured positive limit."
+  (and (integerp anvil-server-max-inline-result-bytes)
+       (> anvil-server-max-inline-result-bytes 0)
+       (> (anvil-server--projected-json-string-bytes
+           text anvil-server-max-inline-result-bytes)
+          anvil-server-max-inline-result-bytes)))
+
 (defun anvil-server--handle-tools-call
     (id params method-metrics server-id)
   "Handle tools/call request with ID and PARAMS for SERVER-ID.
@@ -1635,7 +1725,21 @@ virtual server-ids share the same handler pool."
             (when tools-table
               (gethash tool-name tools-table))))
     (if tool
-        (let ((handler (plist-get tool :handler))
+        (if (not (or (null anvil-server-max-inline-result-bytes)
+                     (and (integerp anvil-server-max-inline-result-bytes)
+                          (<= anvil-server-max-inline-result-bytes 0))
+                     (and (integerp anvil-server-max-inline-result-bytes)
+                          (> anvil-server-max-inline-result-bytes 0))))
+            (progn
+              (anvil-server-metrics--track-tool-call tool-name t)
+              (anvil-server--metrics-bump
+               (anvil-server-metrics-errors method-metrics))
+              (anvil-server--respond-with-result
+               (list :id id)
+               `((content . [((type . "text")
+                              (text . ,anvil-server--inline-result-limit-error-text))])
+                 (isError . t))))
+          (let ((handler (plist-get tool :handler))
               (context (list :id id)))
           (condition-case err
               (let*
@@ -1746,7 +1850,7 @@ virtual server-ids share the same handler pool."
                    ;; preferred long-form (it round-trips through the
                    ;; raw handler for ERT), but un-wrapped handlers no
                    ;; longer need to hand-stringify.
-                   (result-text
+                   (raw-result-text
                     (cond
                      ((null result)
                       "")
@@ -1766,30 +1870,54 @@ virtual server-ids share the same handler pool."
                           " value (string / nil / plist / list /"
                           " hash-table / vector), got: %s")
                          (type-of result)))))))
-                   (result-text
-                    (if (fboundp 'anvil-disclosure-budget-apply)
-                        (anvil-disclosure-budget-apply tool-name result-text)
-                      result-text))
+                   (initial-overflow
+                    (and (stringp raw-result-text)
+                         (anvil-server--inline-result-over-limit-p
+                          raw-result-text)))
+                   (disclosed-result-text
+                    (if initial-overflow
+                        raw-result-text
+                      (if (fboundp 'anvil-disclosure-budget-apply)
+                          (anvil-disclosure-budget-apply
+                           tool-name raw-result-text)
+                        raw-result-text)))
+                   (final-overflow
+                    (or initial-overflow
+                        (and (stringp disclosed-result-text)
+                             (anvil-server--inline-result-over-limit-p
+                              disclosed-result-text))))
+                   (final-result-text
+                    (if final-overflow
+                        anvil-server--inline-result-too-large-text
+                      (substring-no-properties disclosed-result-text)))
                    ;; Wrap the handler result in the MCP format
                    (formatted-result
                     `((content
                        .
                        ,(vector
-                         `((type . "text") (text . ,result-text))))
-                      (isError . :json-false))))
-                (anvil-server-metrics--track-tool-payload
-                 tool-name tool-args result-text)
-                (anvil-server-metrics--track-tool-call tool-name)
-                (condition-case hook-err
-                    (run-hook-with-args
-                     'anvil-server-tool-dispatch-hook
-                     tool-name server-id)
-                  (error
-                   (message "anvil-server: dispatch-hook error on %s: %s"
-                            tool-name
-                            (error-message-string hook-err))))
-                (anvil-server--respond-with-result
-                 context formatted-result))
+                         `((type . "text") (text . ,final-result-text))))
+                      (isError . ,(if final-overflow t :json-false)))))
+                (if final-overflow
+                    (progn
+                      (anvil-server-metrics--track-tool-call tool-name t)
+                      (anvil-server--metrics-bump
+                       (anvil-server-metrics-errors method-metrics))
+                      (anvil-server--respond-with-result
+                       context formatted-result))
+                  (anvil-server-metrics--track-tool-payload
+                   tool-name tool-args final-result-text)
+                  (anvil-server-metrics--track-tool-call tool-name)
+                  (condition-case hook-err
+                      (run-hook-with-args
+                       'anvil-server-tool-dispatch-hook
+                       tool-name server-id)
+                    (error
+                     (message "anvil-server: dispatch-hook error on %s: %s"
+                              (anvil-server-truncate-text
+                               (anvil-server--condition-message tool-name) 128)
+                              (anvil-server--condition-message hook-err))))
+                  (anvil-server--respond-with-result
+                   context formatted-result)))
             ;; Handle invalid parameter errors
             (anvil-server-invalid-params
              (anvil-server-metrics--track-tool-call tool-name t)
@@ -1821,7 +1949,8 @@ virtual server-ids share the same handler pool."
              (cl-incf (anvil-server-metrics-errors method-metrics))
              (anvil-server--jsonrpc-error
               id anvil-server-jsonrpc-error-internal
-              (format "Tool handler quit: %S" err)))
+              (format "Tool handler quit: %s"
+                      (anvil-server--condition-raw-context err))))
             ;; Keep existing handling for all other errors
             (error
              (anvil-server-metrics--track-tool-call tool-name t)
@@ -1831,11 +1960,9 @@ virtual server-ids share the same handler pool."
              (anvil-server--jsonrpc-error
               id anvil-server-jsonrpc-error-internal
               (anvil-server-truncate-text
-               (format "Internal error executing tool: %s"
-                       (let ((print-length 64)
-                             (print-level 8))
-                         (error-message-string err)))
-               anvil-server-tool-error-max-chars)))))
+              (format "Internal error executing tool: %s"
+                      (anvil-server--condition-message err))
+               anvil-server-tool-error-max-chars))))))
       (anvil-server-metrics--track-tool-call tool-name t)
       (anvil-server--metrics-bump (anvil-server-metrics-errors method-metrics))
       (anvil-server--jsonrpc-error
@@ -1945,15 +2072,23 @@ reader how to get a smaller result."
 
 (defun anvil-server-format-tool-error (err)
   "Return the \"Error: ...\" tool message for condition ERR.
-The signal data is printed with bounded `print-length' and
-`print-level' so a huge object carried by ERR is elided while it is
-printed rather than after, then the text is capped at
-`anvil-server-tool-error-max-chars'."
-  (anvil-server-truncate-text
-   (let ((print-length 64)
-         (print-level 8))
-     (format "Error: %S" err))
-   anvil-server-tool-error-max-chars))
+The data is snapshotted with finite budgets before printing, then rendered
+with bounded `print-length' and `print-level'.  The final text is capped at
+`anvil-server-tool-error-max-chars'; disabling that cap does not disable the
+snapshot budgets.  Large data may be elided or replaced by markers."
+  (let* ((snapshot
+          (let ((anvil-bounded-data--snapshot-node-limit 512)
+                (anvil-bounded-data--snapshot-depth-limit 8)
+                (anvil-bounded-data--snapshot-char-limit 4096))
+            (plist-get (anvil-bounded-data--bounded-snapshot err) :value)))
+         (text
+          (let ((print-length 64)
+                (print-level 8)
+                (print-circle t)
+                (print-gensym nil)
+                (float-output-format nil))
+            (format "Error: %S" snapshot))))
+    (anvil-server-truncate-text text anvil-server-tool-error-max-chars)))
 
 (defmacro anvil-server-with-error-handling (&rest body)
   "Execute BODY with automatic error handling for MCP tools.

@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-10-04
+
+### Fixed
+
+- Snapshot arbitrary tool error data before raw `Error: ...` rendering, using
+  finite node, depth and leaf-character budgets even when final text truncation
+  is disabled. Share the pure data snapshot with harness telemetry while
+  preserving telemetry's private API and dynamically bound limits. Generic
+  server error formatting and other error/transport paths remain separate.
+- Bound automatic harness telemetry error rendering before printing arbitrary
+  error data. Limit traversal work, nesting and characters; truncate or replace
+  oversized data and use omission markers for cyclic or opaque values. Bound
+  stored error messages as well as raw context, tool labels and recorder-failure logging, while
+  preserving ordinary small messages and classifier rule order. This changes
+  telemetry consumption only; server error formatting and cancellation remain
+  separate.
+- Bound successful inline tool-result text to 2 MiB of projected escaped
+  UTF-8 JSON-string bytes by default, excluding surrounding quotes. Reject
+  oversized normalized results before disclosure and check disclosure output
+  again before payload telemetry. Rejections use a fixed, content-free error.
+  Nil or a non-positive integer `anvil-server-max-inline-result-bytes`
+  restores legacy successful-result behavior. This does not cap execution,
+  result construction, existing error paths, or complete transport frames.
+- Bound inline `file-read` to 1 MiB of raw selected bytes by default. Large
+  unpaginated reads fail with pagination instructions; paginated reads use
+  bounded chunks instead of retaining the whole file. Line-ending detection
+  and total-line counts can require two full scans. Nil or non-positive
+  integer `anvil-file-max-inline-read-bytes`
+  explicitly restores legacy reads; the cap does not bound encoded MCP size.
+- Bound traversal and nesting of diagnostic and telemetry data before
+  formatting, and share raw tool-error snapshots with telemetry. Ordinary
+  error codes and telemetry metrics remain intact; generic server errors and
+  other error/transport paths are not all bounded by these changes.
+- Route condition, quit, resource, and hook errors through bounded handling
+  while preserving ordinary error codes and metrics.
+- After a successful kill request, detach all identically owned slots
+  synchronously without waiting for the sentinel. Kill errors preserve
+  ownership; raw-response and pool diagnostics are retained. This does not
+  establish a fix for arbitrary worker death or prove a historical macOS cause.
+
 ## [1.4.0] - 2026-10-03
 
 Release of the develop line through 2026-10-03 on `master`. This release
@@ -647,7 +687,8 @@ Initial tagged release — see git history for details.
 
 Project inception.
 
-[Unreleased]: https://github.com/zawatton/anvil.el/compare/v1.4.0...master
+[Unreleased]: https://github.com/zawatton/anvil.el/compare/v1.4.1...master
+[1.4.1]: https://github.com/zawatton/anvil.el/releases/tag/v1.4.1
 [1.4.0]: https://github.com/zawatton/anvil.el/releases/tag/v1.4.0
 [0.3.1]: https://github.com/zawatton21/anvil.el/releases/tag/v0.3.1
 [0.3.0]: https://github.com/zawatton21/anvil.el/releases/tag/v0.3.0

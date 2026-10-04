@@ -739,12 +739,20 @@ from the PID that ran the first call."
            :offload-timeout 2.0)
           (let* ((metrics (make-anvil-server-metrics))
                  (decode-pid (lambda (resp)
-                               (let* ((r (alist-get 'result
-                                                    (json-read-from-string resp)))
-                                      (txt (alist-get 'text
-                                                      (aref (alist-get 'content r) 0))))
-                                 (string-match "pid:\\([0-9]+\\)" txt)
-                                 (string-to-number (match-string 1 txt))))))
+                               (ert-info ((format "PID response: %s; pool: %S; pending: %d"
+                                                  resp (anvil-offload-pool-status)
+                                                  (hash-table-count
+                                                   (anvil-offload--ensure-pending))))
+                                 (let* ((response (json-read-from-string resp))
+                                        (r (alist-get 'result response))
+                                        (content (alist-get 'content r)))
+                                   (should-not (alist-get 'error response))
+                                   (should (vectorp content))
+                                   (should (> (length content) 0))
+                                   (let ((txt (alist-get 'text (aref content 0))))
+                                     (should (stringp txt))
+                                     (should (string-match "pid:\\([0-9]+\\)" txt))
+                                     (string-to-number (match-string 1 txt))))))))
             (setq pid-before
                   (funcall decode-pid
                            (anvil-server--handle-tools-call

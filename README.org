@@ -23,7 +23,15 @@ run elisp, query SQLite, and more *through Emacs primitives* instead
 of generic =sed= / =grep= / =read-whole-file= round-trips.  That
 swap is where the token savings come from.
 
-v1.4.0 brings the develop line through 2026-10-03 to =master=. It adds
+v1.4.1 (2026-10-04) adds bounded handling for
+selected file reads and successful inline results, bounded diagnostic and
+telemetry traversal, and safer worker cleanup after successful termination.
+These changes build on the v1.4.0 feature set: searchable Claude Code session
+events and PreCompact reference snapshots, in-place memory updates, stateless
+MCP requests, worker deadlines, a NeLisp v1.2.0 standalone path, and expanded
+fusion capabilities. The Emacs daemon remains the full-featured path.
+
+v1.4.0 brought the develop line through 2026-10-03 to =master=. It adds
 searchable Claude Code session events and PreCompact reference
 snapshots, in-place memory updates, stateless MCP requests, worker
 deadlines and timeout cleanup, and a NeLisp v1.2.0 standalone path
@@ -37,7 +45,27 @@ the Emacs daemon remains the full-featured path.
 
 * Current Release Highlights
 
-Release v1.4.0 includes the July master wave and the subsequent
+Release v1.4.1 (2026-10-04) adds bounded handling for file reads, successful inline results,
+diagnostic snapshots, and telemetry rendering, plus safer worker cleanup.
+The byte limits apply at their documented boundaries; they do not bound
+arbitrary execution or complete transport frames. The v1.4.0 feature baseline
+and July master wave remain available below.
+
+| Area | What changed |
+|------+--------------|
+| File reads | Default 1 MiB cap on selected raw bytes; pagination reads bounded chunks. Nil or non-positive legacy settings retain prior behavior. |
+| Inline results | Default 2 MiB budget for projected escaped UTF-8 JSON-string bytes on normalized successful results, checked before and after disclosure. Execution, result construction, error paths, and full frames are outside this limit. |
+| Diagnostics and telemetry | Finite traversal, depth, and leaf budgets apply before formatting. Raw tool-error snapshots are shared with telemetry; ordinary codes and metrics are preserved. Other error and transport paths are not all bounded. |
+| Worker cleanup | After a successful kill request, all identically owned slots are detached synchronously, without waiting for the sentinel. Kill errors preserve ownership; raw-response and pool diagnostics are retained. |
+
+For larger file reads, pass =offset="0"= and =limit="200"=, reducing the limit
+if the selected page is too large. Use paginated, filtered, tee, or asynchronous
+interfaces for larger results. Set =anvil-file-max-inline-read-bytes= or
+=anvil-server-max-inline-result-bytes= to nil or a non-positive integer only
+to restore the corresponding legacy behavior; other error and transport paths
+are not all bounded.
+
+Previous release: v1.4.0 includes the July master wave and the subsequent
 develop work through 2026-10-03. The July fusion guide is at
 [[file:docs/FUSION-GUIDE.org][docs/FUSION-GUIDE.org]]. New develop additions include:
 
@@ -173,7 +201,7 @@ bin/anvil-runtime mcp serve
 
 ** Path B — Emacs integrated (recommended for Emacs users)
 
-For day-to-day Emacs users. Pin to v1.4.0 via your favourite
+For day-to-day Emacs users. Pin to v1.4.1 via your favourite
 package manager.
 
 *** Quick install (one command)
@@ -199,17 +227,17 @@ installed.
 #+begin_src emacs-lisp
 ;; async-installer
 (async-installer-git-add "https://github.com/zawatton/anvil.el.git"
-                         :tag "v1.4.0"
+                         :tag "v1.4.1"
                          :main "anvil.el")
 
 ;; or straight.el
 (straight-use-package
  '(anvil :type git :host github :repo "zawatton/anvil.el"
-         :branch "v1.4.0"))
+         :branch "v1.4.1"))
 
 ;; or elpaca
 (elpaca (anvil :host github :repo "zawatton/anvil.el"
-               :ref "v1.4.0"))
+               :ref "v1.4.1"))
 #+end_src
 
 After installing:
@@ -449,6 +477,49 @@ only the delta:
 For org-mode refactors specifically, MCP-backed operations
 (section move, refile, split) run *10–20× cheaper in tokens* than
 their Read + Write equivalents.
+
+In v1.4.1, =file-read= defaults to a 1 MiB raw-byte cap.
+For larger files, pass =offset="0"= and =limit="200"=; reduce the limit
+if the selected page also exceeds the cap. Pagination uses bounded chunks
+and retains only the selected page. Preserving automatic line-ending
+detection may require an additional bounded scan; exact =:total-lines=
+still needs a complete scan. The cap does not bound encoded MCP response size or scan
+time. Set =anvil-file-max-inline-read-bytes= to nil, zero or a negative
+integer only when explicitly choosing legacy full-file reads.
+
+Successful inline tool-result text also defaults to a 2 MiB limit after
+projecting UTF-8 JSON string escaping, excluding surrounding quotes. The
+server checks normalized results before and after disclosure processing;
+oversized content is replaced with a fixed error before payload telemetry.
+Use paginated, filtered, tee or asynchronous interfaces for larger results.
+Set =anvil-server-max-inline-result-bytes= to nil or a non-positive integer
+to explicitly restore legacy behavior. The cap applies to successful text;
+its fixed rejection diagnostic has a separate bound, and existing error
+paths and complete response frames are outside it. Tool execution and rich
+result normalization can still allocate large values before this check.
+
+Automatic harness failure telemetry also bounds error data before rendering.
+It limits visited elements, nesting and characters. Oversized data is truncated
+or replaced; cyclic or opaque values use omission markers. Stored error
+messages default to 4,096 characters and raw context to 500; configure
+=anvil-harness-telemetry-error-message-max-chars= and
+=anvil-harness-telemetry-raw-context-max-chars= for smaller fields. Zero keeps
+the field empty, invalid settings use finite defaults, and larger settings
+are clamped to 4,096 characters. Classification uses bounded message text and
+retains the existing rule order. This applies to automatic error recording;
+direct manual recording, other server error paths and cancellation remain
+separate.
+
+Raw errors caught by =anvil-server-with-error-handling= are also copied before
+printing: at most 512 visited values, depth 8 and 4,096 leaf characters.
+Large strings are truncated; cyclic or opaque values use omission markers.
+The pure snapshot implementation is shared with telemetry. The existing
+=anvil-server-tool-error-max-chars= setting controls final text truncation;
+setting it to nil disables that final cap while the independent data-copy
+limits remain finite. Small ordinary =Error: ...= messages retain their text.
+Generic server error formatting, explicit tool-throw text, lazy loaders,
+quit/invalid-parameter/not-found responses and transport containment remain
+separate.
 
 ** Batch edits into one round trip
 
