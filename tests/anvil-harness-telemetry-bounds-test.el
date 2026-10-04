@@ -234,5 +234,36 @@
                            :error-message))
     (setplist name nil)))
 
+(ert-deftest anvil-ht-bounds-shared-renderer-forwards-all-private-limits ()
+  (let ((anvil-harness-telemetry--snapshot-node-limit 6)
+        (anvil-harness-telemetry--snapshot-depth-limit 2)
+        (anvil-harness-telemetry--snapshot-char-limit 17)
+        (anvil-harness-telemetry-error-message-max-chars 9)
+        (anvil-harness-telemetry-raw-context-max-chars 4)
+        (observed nil))
+    (cl-letf (((symbol-function 'anvil-bounded-data--render-snapshot)
+               (lambda (_snapshot &optional message-max raw-max)
+                 (setq observed
+                       (list anvil-bounded-data--snapshot-node-limit
+                             anvil-bounded-data--snapshot-depth-limit
+                             anvil-bounded-data--snapshot-char-limit
+                             message-max raw-max))
+                 '(:message "safe" :raw-context "raw"))))
+      (should (equal (anvil-harness-telemetry--render-snapshot '(:value "x"))
+                     '(:message "safe" :raw-context "raw"))))
+    (should (equal observed '(6 2 17 9 4)))))
+
+(ert-deftest anvil-ht-bounds-private-metadata-helpers-preserve-dynamic-limits ()
+  (let ((anvil-harness-telemetry--snapshot-node-limit 2)
+        (anvil-harness-telemetry--snapshot-char-limit 5)
+        (symbol (make-symbol "helper-limits")))
+    (setplist symbol '(padding t error-message "late" error-conditions (file-error error)))
+    (should (= (anvil-harness-telemetry--finite-limit 99 4096) 5))
+    (should (= (anvil-harness-telemetry--finite-limit nil 4096) 4096))
+    (should (= (plist-get (anvil-harness-telemetry--bounded-symbol-properties symbol) :steps) 2))
+    (should-not (plist-get (anvil-harness-telemetry--bounded-symbol-properties symbol) :error-message))
+    (should (equal (anvil-harness-telemetry--safe-condition-names
+                    symbol '(custom error file-error)) '(error)))))
+
 (provide 'anvil-harness-telemetry-bounds-test)
 ;;; anvil-harness-telemetry-bounds-test.el ends here

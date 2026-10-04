@@ -970,13 +970,28 @@ failed.  JSON-RPC 2.0 requires error responses to echo the request
 id; a client cannot match an `id: null' error against its pending
 request and may wait forever.")
 
+(defun anvil-server--condition-message (err)
+  "Return ERR's message after snapshotting it before native formatting.
+The snapshot uses independent node, depth, and character limits; the
+caller applies any final response cap separately."
+  (let* ((snapshot
+          (let ((anvil-bounded-data--snapshot-node-limit 512)
+                (anvil-bounded-data--snapshot-depth-limit 8)
+                (anvil-bounded-data--snapshot-char-limit 4096))
+            (anvil-bounded-data--bounded-snapshot err))))
+    (let ((anvil-bounded-data--snapshot-node-limit 512)
+          (anvil-bounded-data--snapshot-depth-limit 8)
+          (anvil-bounded-data--snapshot-char-limit 4096))
+      (plist-get (anvil-bounded-data--render-snapshot snapshot 4096 0)
+                 :message))))
+
 (defun anvil-server--handle-error (err)
   "Handle error ERR in MCP process by logging and creating an error response.
 Returns a JSON-RPC error response string for internal errors."
   (anvil-server--jsonrpc-error
    anvil-server--current-request-id
    anvil-server-jsonrpc-error-internal
-   (format "Internal error: %s" (error-message-string err))))
+   (format "Internal error: %s" (anvil-server--condition-message err))))
 
 (defun anvil-server--validate-and-dispatch-request
     (request server-id)
@@ -1924,10 +1939,8 @@ virtual server-ids share the same handler pool."
              (anvil-server--jsonrpc-error
               id anvil-server-jsonrpc-error-internal
               (anvil-server-truncate-text
-               (format "Internal error executing tool: %s"
-                       (let ((print-length 64)
-                             (print-level 8))
-                         (error-message-string err)))
+              (format "Internal error executing tool: %s"
+                      (anvil-server--condition-message err))
                anvil-server-tool-error-max-chars))))))
       (anvil-server-metrics--track-tool-call tool-name t)
       (anvil-server--metrics-bump (anvil-server-metrics-errors method-metrics))

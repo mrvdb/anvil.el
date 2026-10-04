@@ -141,95 +141,34 @@ not by the rule table itself.")
    ((and (consp err) (symbolp (car err))) (car err))))
 
 (defun anvil-harness-telemetry--finite-limit (value default)
-  (if (and (integerp value) (>= value 0))
-      (min value anvil-harness-telemetry--snapshot-char-limit)
-    default))
+  (let ((anvil-bounded-data--snapshot-char-limit
+         anvil-harness-telemetry--snapshot-char-limit))
+    (anvil-bounded-data--finite-limit value default)))
 
 (defun anvil-harness-telemetry--bounded-symbol-properties (symbol)
   "Read telemetry metadata from SYMBOL's plist in a bounded traversal.
 The result contains only the `error-message' and `error-conditions' values."
-  (let ((tail (symbol-plist symbol)) (seen (make-hash-table :test #'eq))
-        (message-value nil) (conditions-value nil) (steps 0) (malformed nil)
-        (message-found nil) (conditions-found nil) (stopped-early nil))
-    (while (and (consp tail) (< steps anvil-harness-telemetry--snapshot-node-limit)
-                (not (gethash tail seen))
-                (not (and message-found conditions-found)))
-      (puthash tail t seen)
-      (let ((value-cell (cdr tail)))
-        (if (not (consp value-cell))
-            (setq tail nil malformed t)
-          (puthash value-cell t seen)
-          (when (and (eq (car tail) 'error-message) (not message-found))
-            (setq message-value (car value-cell) message-found t))
-          (when (and (eq (car tail) 'error-conditions) (not conditions-found))
-            (setq conditions-value (car value-cell) conditions-found t))
-          (setq tail (cdr value-cell)
-                steps (+ steps 2)))))
-    (setq stopped-early
-          (and (consp tail) (not (and message-found conditions-found))))
-    (list :error-message message-value :error-conditions conditions-value
-          :steps steps :truncated (or malformed stopped-early))))
+  (let ((anvil-bounded-data--snapshot-node-limit
+         anvil-harness-telemetry--snapshot-node-limit))
+    (anvil-bounded-data--bounded-symbol-properties symbol)))
 
 (defun anvil-harness-telemetry--safe-condition-names (symbol condition-value)
   "Return a normalized formatter condition list for SYMBOL."
-  (let ((tail condition-value) (seen (make-hash-table :test #'eq))
-        (out nil) (steps 0))
-    (while (and (consp tail) (< steps anvil-harness-telemetry--snapshot-node-limit)
-                (not (gethash tail seen)))
-      (puthash tail t seen)
-      (when (eq (car tail) 'file-error) (push 'file-error out))
-      (setq tail (cdr tail) steps (1+ steps)))
-    (cond ((memq 'file-error out) '(file-error error))
-          ((memq symbol '(void-function wrong-type-argument wrong-number-of-arguments))
-           (list symbol 'error))
-          (t '(error)))))
+  (let ((anvil-bounded-data--snapshot-node-limit
+         anvil-harness-telemetry--snapshot-node-limit))
+    (anvil-bounded-data--safe-condition-names symbol condition-value)))
 
 (defun anvil-harness-telemetry--render-snapshot (snapshot)
   "Render SNAPSHOT into bounded :message and :raw-context strings."
-  (let* ((value (plist-get snapshot :value))
-         (msg-limit (anvil-harness-telemetry--finite-limit
-                     anvil-harness-telemetry-error-message-max-chars 4096))
-         (raw-limit (anvil-harness-telemetry--finite-limit
-                     anvil-harness-telemetry-raw-context-max-chars 500))
-         (float-output-format nil) (print-gensym nil)
-         (print-length 512) (print-level 8) (print-circle t)
-         (message-text
-          (cond
-           ((stringp value) value)
-           ((and (consp value) (symbolp (car value)))
-            (if (eq (car value) 'error)
-                (condition-case nil
-                    (error-message-string (cons 'error (cdr value)))
-                  (error (format "%S" value)))
-              (let* ((head (make-symbol (substring-no-properties (symbol-name (car value)))))
-                   (properties (anvil-harness-telemetry--bounded-symbol-properties
-                                (car value)))
-                   (metadata (or (plist-get properties :error-message)
-                                 (and (plist-get properties :truncated)
-                                      "<metadata truncated>")))
-                   (meta-snap (and metadata (anvil-harness-telemetry--bounded-snapshot metadata 4096)))
-                   (meta (if meta-snap (plist-get meta-snap :value) nil)))
-              (put head 'error-conditions
-                   (anvil-harness-telemetry--safe-condition-names
-                    (car value) (plist-get properties :error-conditions)))
-              (when metadata
-                (if (not (stringp meta))
-                    (put head 'error-message "<invalid error-message>")
-                  (if (cl-some (lambda (directive)
-                               (string-match-p (regexp-quote directive) meta))
-                             '("\\[" "\\<" "\\{" "\\="))
-                    (put head 'error-message "<key sequence elided>")
-                    (put head 'error-message meta))))
-              (condition-case nil
-                  (error-message-string (cons head (cdr value)))
-                (error (format "%S" value))))))
-           ((null value) "")
-           (t (format "%S" value))))
-         (raw (let ((print-length 512) (print-level 8) (print-circle t)
-                    (float-output-format nil) (print-gensym nil))
-                (format "%S" value))))
-    (list :message (substring-no-properties message-text 0 (min msg-limit (length message-text)))
-          :raw-context (substring-no-properties raw 0 (min raw-limit (length raw))))))
+  (let ((anvil-bounded-data--snapshot-node-limit
+         anvil-harness-telemetry--snapshot-node-limit)
+        (anvil-bounded-data--snapshot-depth-limit
+         anvil-harness-telemetry--snapshot-depth-limit)
+        (anvil-bounded-data--snapshot-char-limit
+         anvil-harness-telemetry--snapshot-char-limit))
+    (anvil-bounded-data--render-snapshot
+     snapshot anvil-harness-telemetry-error-message-max-chars
+     anvil-harness-telemetry-raw-context-max-chars)))
 
 (defun anvil-harness-telemetry--render-error (err)
   (let ((snapshot (anvil-harness-telemetry--bounded-snapshot err)))
