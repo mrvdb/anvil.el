@@ -985,6 +985,20 @@ caller applies any final response cap separately."
       (plist-get (anvil-bounded-data--render-snapshot snapshot 4096 0)
                  :message))))
 
+(defun anvil-server--condition-raw-context (err)
+  "Return ERR's bounded raw diagnostic context before printing.
+The snapshot and render limits bound diagnostic work independently of
+the final response cap."
+  (let* ((anvil-bounded-data--snapshot-node-limit 512)
+         (anvil-bounded-data--snapshot-depth-limit 8)
+         (anvil-bounded-data--snapshot-char-limit 4096)
+         (snapshot (anvil-bounded-data--bounded-snapshot err)))
+    (let ((anvil-bounded-data--snapshot-node-limit 512)
+          (anvil-bounded-data--snapshot-depth-limit 8)
+          (anvil-bounded-data--snapshot-char-limit 4096))
+      (plist-get (anvil-bounded-data--render-snapshot snapshot 0 4096)
+                 :raw-context))))
+
 (defun anvil-server--handle-error (err)
   "Handle error ERR in MCP process by logging and creating an error response.
 Returns a JSON-RPC error response string for internal errors."
@@ -1235,7 +1249,10 @@ METHOD-METRICS is used to track errors."
      (cl-incf (anvil-server-metrics-errors method-metrics))
      (anvil-server--jsonrpc-error
       id anvil-server-jsonrpc-error-internal
-      (format "Resource handler quit for %s: %S" uri err)))
+      (format "Resource handler quit for %s: %s"
+              (anvil-server-truncate-text
+               (anvil-server--condition-message uri) 128)
+              (anvil-server--condition-raw-context err))))
     ;; Handle any other error from the handler
     (error
      (anvil-server--metrics-bump (anvil-server-metrics-errors method-metrics))
@@ -1930,7 +1947,8 @@ virtual server-ids share the same handler pool."
              (cl-incf (anvil-server-metrics-errors method-metrics))
              (anvil-server--jsonrpc-error
               id anvil-server-jsonrpc-error-internal
-              (format "Tool handler quit: %S" err)))
+              (format "Tool handler quit: %s"
+                      (anvil-server--condition-raw-context err))))
             ;; Keep existing handling for all other errors
             (error
              (anvil-server-metrics--track-tool-call tool-name t)
