@@ -1487,7 +1487,7 @@ main dispatch flow."
                             err tool-name source)
       (error
        (message "anvil-server: tool-error-hook failed: %s"
-                (error-message-string hook-err))))))
+                (anvil-server--condition-message hook-err))))))
 
 (defvar anvil-server-id-aliases nil
   "Alist mapping virtual server-ids to real server-ids.
@@ -1894,8 +1894,9 @@ virtual server-ids share the same handler pool."
                        tool-name server-id)
                     (error
                      (message "anvil-server: dispatch-hook error on %s: %s"
-                              tool-name
-                              (error-message-string hook-err))))
+                              (anvil-server-truncate-text
+                               (anvil-server--condition-message tool-name) 128)
+                              (anvil-server--condition-message hook-err))))
                   (anvil-server--respond-with-result
                    context formatted-result)))
             ;; Handle invalid parameter errors
