@@ -1259,7 +1259,9 @@ METHOD-METRICS is used to track errors."
      (anvil-server--jsonrpc-error
       id anvil-server-jsonrpc-error-internal
       (format "Error reading resource %s: %s"
-              uri (error-message-string err))))))
+              (anvil-server-truncate-text
+               (anvil-server--condition-message uri) 128)
+              (anvil-server--condition-message err))))))
 
 (defun anvil-server--handle-resources-read
     (id params method-metrics server-id)
