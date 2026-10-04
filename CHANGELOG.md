@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bound automatic harness telemetry error rendering before printing arbitrary
+  error data. Limit traversal work, nesting and characters; truncate or replace
+  oversized data and use omission markers for cyclic or opaque values. Bound
+  stored error messages as well as raw context, tool labels and recorder-failure logging, while
+  preserving ordinary small messages and classifier rule order. This changes
+  telemetry consumption only; server error formatting and cancellation remain
+  separate.
 - Bound successful inline tool-result text to 2 MiB of projected escaped
   UTF-8 JSON-string bytes by default, excluding surrounding quotes. Reject
   oversized normalized results before disclosure and check disclosure output
