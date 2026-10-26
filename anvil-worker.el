@@ -557,6 +557,7 @@ after the pool was initialised)."
 (defun anvil-worker--init-pool ()
   "(Re-)initialise the lane-keyed pool plist from the configured sizes.
 Resets the per-lane dispatch indices."
+  (anvil-worker--health-cancel)
   (setq anvil-worker--pool nil)
   (dolist (lane anvil-worker--lanes)
     (let* ((size (anvil-worker--lane-size lane))
@@ -660,9 +661,29 @@ customize it at any point during init), a name-based check would
 look in the wrong directory and condemn every healthy worker —
 deleting live sockets and orphaning the daemons behind them."
   (if server-use-tcp
-      (let ((pid (anvil-worker--server-file-pid server-file)))
+      (let* ((pid (anvil-worker--server-file-pid server-file))
+             (attributes (and pid (condition-case nil
+                                      (process-attributes pid)
+                                    (error '((unknown . t))))))
+             (comm (alist-get 'comm attributes))
+             (start (alist-get 'start attributes)))
         (or (null pid)
-            (null (process-attributes pid))))
+            (null attributes)
+            (and (eq system-type 'windows-nt)
+                 (stringp comm) (not (string-empty-p comm))
+                 (stringp anvil-worker-emacs-bin)
+                 (not (string-empty-p anvil-worker-emacs-bin))
+                 (cl-flet ((executable-name (name)
+                             (string-remove-suffix
+                              ".exe" (downcase (file-name-nondirectory
+                                                (subst-char-in-string ?\\ ?/ name))))))
+                   (not (equal (executable-name comm)
+                               (executable-name anvil-worker-emacs-bin)))))
+            (and start
+                 (ignore-errors
+                   (time-less-p
+                    (file-attribute-modification-time (file-attributes server-file))
+                    start)))))
     (condition-case nil
         (progn
           (delete-process
@@ -968,6 +989,7 @@ Return non-nil only after PROC is confirmed dead."
 (defun anvil-worker-kill ()
   "Kill every worker daemon in every lane."
   (interactive)
+  (anvil-worker--health-cancel)
   (let ((anvil-worker--kill-in-progress t))
     (clrhash anvil-worker--spawn-times)
     (anvil-worker--map-pool
@@ -1492,10 +1514,14 @@ or mutates WORKER."
   "Inspect demanded WORKER and recover it when dead or unresponsive.
 Never-demanded lazy workers are not probed or spawned."
   (when (plist-get worker :demanded)
-    (let* ((alive (anvil-worker--worker-alive-p worker))
-           (quick-alive
-            (and (not alive) (anvil-worker--quick-alive-p worker)))
-           (last (plist-get worker :last-state))
+    (let ((alive (anvil-worker--worker-alive-p worker)))
+      (anvil-worker--health-result
+       worker alive (and (not alive) (anvil-worker--quick-alive-p worker))))))
+
+(defun anvil-worker--health-result (worker alive quick-alive &optional valid)
+  "Apply ALIVE and QUICK-ALIVE observations to demanded WORKER."
+  (when (and (or (null valid) (funcall valid)) (plist-get worker :demanded))
+    (let* ((last (plist-get worker :last-state))
            (name (plist-get worker :name))
            (lane (anvil-worker--lane-name (plist-get worker :lane))))
       (cond
@@ -1511,12 +1537,13 @@ Never-demanded lazy workers are not probed or spawned."
         (let ((checks (1+ (or (plist-get worker :hung-checks) 0))))
           (plist-put worker :hung-checks checks)
           (unless (eq last 'dead)
+            (plist-put worker :last-state 'dead)
             (anvil-worker--log
              'unresponsive
              (format "%s lane=%s probe=%d/%d"
-                     name lane checks anvil-worker-hung-check-limit))
-            (plist-put worker :last-state 'dead))
-          (when (>= checks (max 1 anvil-worker-hung-check-limit))
+                     name lane checks anvil-worker-hung-check-limit)))
+          (when (and (or (null valid) (funcall valid))
+                     (>= checks (max 1 anvil-worker-hung-check-limit)))
             ;; Do not unlink a connectable socket or spawn in the same tick.
             ;; The next dead tick verifies the socket is stale before replacing.
             (anvil-worker--terminate-owned-hung-worker worker))))
@@ -1530,24 +1557,253 @@ Never-demanded lazy workers are not probed or spawned."
             (anvil-worker--log
              'startup-dead
              (format "%s lane=%s respawning" name lane))
-            (anvil-worker--spawn-worker worker)))
+            (when (or (null valid) (funcall valid))
+              (anvil-worker--spawn-worker worker))))
          ((and (eq last 'alive) (not alive))
+          (plist-put worker :last-state 'dead)
           (anvil-worker--log
            'death (format "%s lane=%s respawning" name lane))
-          (plist-put worker :last-state 'dead)
-          (anvil-worker--spawn-worker worker))
+          (when (or (null valid) (funcall valid))
+            (anvil-worker--spawn-worker worker)))
          ((and (eq last 'dead) alive)
-          (anvil-worker--log 'recovered (format "%s lane=%s" name lane))
-          (plist-put worker :last-state 'alive))
+          (plist-put worker :last-state 'alive)
+          (anvil-worker--log 'recovered (format "%s lane=%s" name lane)))
          ((and (eq last 'dead) (not alive))
-          (anvil-worker--spawn-worker worker))))))))
+          (when (or (null valid) (funcall valid))
+            (anvil-worker--spawn-worker worker)))))))))
+
+(defvar anvil-worker--health-generation 0)
+(defvar anvil-worker--health-queue nil)
+(defvar anvil-worker--health-probes nil
+  "Active probe records, each owning exactly one child and deadline timer.")
+(defvar anvil-worker--health-sweep nil)
+(defvar anvil-worker--health-pumping nil)
+(defvar anvil-worker--health-deadline nil)
+(defvar anvil-worker--health-cursor 0
+  "Next sweep's starting offset, preventing hung endpoints starving later lanes.")
+(defconst anvil-worker--health-concurrency 2)
+
+(defun anvil-worker--health-dispose (record)
+  "Release RECORD's timer, child and buffer without invoking its sentinel."
+  (let ((timer (plist-get record :timer))
+        (proc (plist-get record :process))
+        (buf (plist-get record :buffer))
+        failure)
+    ;; Try every release even if a process hook or resource operation signals.
+    (dolist (release (list (lambda () (when (timerp timer) (cancel-timer timer)))
+                           (lambda () (when (processp proc)
+                                        (set-process-sentinel proc #'ignore)))
+                           (lambda () (when (and (processp proc) (process-live-p proc))
+                                        (delete-process proc)))
+                           (lambda () (when (buffer-live-p buf) (kill-buffer buf)))))
+      (condition-case err (funcall release)
+        ((error quit) (setq failure err))))
+    (when failure (signal (car failure) (cdr failure)))))
+
+(defun anvil-worker--health-cancel ()
+  "Invalidate all health callbacks and release owned probe resources."
+  (cl-incf anvil-worker--health-generation)
+  (let ((records anvil-worker--health-probes) failure)
+    (setq anvil-worker--health-probes nil
+          anvil-worker--health-queue nil
+          anvil-worker--health-sweep nil)
+    (dolist (record records)
+      (setf (plist-get record :done) t)
+      (condition-case err (anvil-worker--health-dispose record)
+        ((error quit)
+         ;; Retain custody so a subsequent stop can retry failed releases.
+         (push record anvil-worker--health-probes)
+         (setq failure err))))
+    (when failure (signal (car failure) (cdr failure)))))
+
+(defun anvil-worker--health-current-p (record)
+  "Return non-nil if RECORD still belongs to the current pool and sweep."
+  (and (= (plist-get record :generation) anvil-worker--health-generation)
+       (eq (plist-get record :pool) anvil-worker--pool)
+       (let* ((worker (plist-get record :worker))
+              (pool (anvil-worker--lane-pool (plist-get worker :lane))))
+         (and pool (memq worker (append pool nil))
+              (equal (plist-get record :endpoint) (plist-get worker :server-file))))
+       (eq (plist-get record :owned-process)
+           (gethash (plist-get (plist-get record :worker) :name)
+                    anvil-worker--owned-processes))
+       anvil-worker--health-sweep
+       (not anvil-worker--kill-in-progress)))
+
+(defun anvil-worker--health-finish (record alive &optional reachable)
+  "Settle RECORD exactly once with ALIVE, releasing resources first."
+  (when (and (not alive) (not server-use-tcp) (null reachable)
+             (not (plist-get record :done))
+             (anvil-worker--health-current-p record)
+             (< (float-time) anvil-worker--health-deadline))
+    (anvil-worker--health-connect record)
+    (setq reachable :deferred))
+  (unless (or (eq reachable :deferred) (plist-get record :done))
+    (setf (plist-get record :done) t)
+    (setq anvil-worker--health-probes (delq record anvil-worker--health-probes))
+    (unwind-protect
+        (progn
+          (condition-case err (anvil-worker--health-dispose record)
+            ((error quit)
+             (push record anvil-worker--health-probes)
+             (anvil-worker--health-cancel)
+             (signal (car err) (cdr err))))
+          (when (anvil-worker--health-current-p record)
+            (let ((worker (plist-get record :worker)))
+              (anvil-worker--health-result
+               worker alive
+               (and (not alive)
+                    (if server-use-tcp (anvil-worker--quick-alive-p worker)
+                      (not (eq reachable :dead))))
+               (lambda () (anvil-worker--health-current-p record))))))
+      (when (= (plist-get record :generation) anvil-worker--health-generation)
+        (if (not (eq (plist-get record :pool) anvil-worker--pool))
+            (anvil-worker--health-cancel)
+          (anvil-worker--health-pump))))))
+
+(defun anvil-worker--health-record (worker)
+  "Capture WORKER's exact current ownership for an asynchronous observation."
+  (list :worker worker :pool anvil-worker--pool
+                      :endpoint (plist-get worker :server-file)
+                      :owned-process (gethash (plist-get worker :name)
+                                              anvil-worker--owned-processes)
+                      :generation anvil-worker--health-generation
+        :done nil :process nil :timer nil :buffer nil))
+
+(defun anvil-worker--health-connect (record)
+  "Classify a failed Unix probe using a nonblocking local socket connection."
+  (let ((previous (plist-get record :process)) (started nil) early-event)
+    (when (processp previous)
+      (set-process-sentinel previous #'ignore)
+      (when (process-live-p previous) (delete-process previous)))
+    (unwind-protect
+        (condition-case err
+            (let ((proc (make-network-process
+                         :name "anvil-health-connect" :family 'local
+                         :service (plist-get record :endpoint) :nowait t
+                         :noquery t :sentinel
+                         (lambda (_child event) (setq early-event event)))))
+              (setf (plist-get record :process) proc)
+              (when (anvil-worker--health-current-p record)
+                (set-process-sentinel
+                 proc (lambda (child event)
+                        (pcase (process-status child)
+                          ('open (anvil-worker--health-finish record nil :alive))
+                          ((or 'failed 'closed 'exit 'signal)
+                           (anvil-worker--health-connect-failed record event)))))
+                (setq started t)
+                (pcase (process-status proc)
+                  ('open (anvil-worker--health-finish record nil :alive))
+                  ('failed (anvil-worker--health-connect-failed record early-event)))))
+          (file-error (setq started t)
+                      (anvil-worker--health-connect-failed record (error-message-string err))))
+      (unless started
+        (unwind-protect (anvil-worker--health-dispose record)
+          (anvil-worker--health-cancel))))))
+
+(defun anvil-worker--health-connect-failed (record &optional failure)
+  "Remove a verified stale Unix socket and settle RECORD as unreachable."
+  (when (and (not (plist-get record :done))
+             (anvil-worker--health-current-p record))
+    ;; EAGAIN from a full local backlog does not prove a stale socket.  Unknown
+    ;; or localized failures are conservative: never unlink a possibly live peer.
+    (let* ((proc (plist-get record :process))
+           (status (and (processp proc) (process-exit-status proc)))
+           (failure (if (and (consp status) (eq (car status) 'file-error))
+                        (error-message-string status) failure))
+           (endpoint (plist-get record :endpoint))
+           (stale (or (not (file-exists-p endpoint))
+                      (and failure
+                           (let ((case-fold-search t))
+                             (string-match-p "connection refused\\|no such file or directory"
+                                             failure))))))
+      (when (and stale (file-exists-p endpoint)) (delete-file endpoint))
+      (anvil-worker--health-finish record nil (if stale :dead :alive)))))
+
+(defun anvil-worker--health-launch (worker)
+  "Launch one bounded probe for WORKER without waiting for any output."
+  (let ((record (anvil-worker--health-record worker))
+        (launched nil))
+    (push record anvil-worker--health-probes)
+    (unwind-protect
+        (progn
+          (setf (plist-get record :buffer) (generate-new-buffer " *anvil-health-probe*"))
+          (setf (plist-get record :process)
+                (make-process
+                 :name "anvil-health-probe" :buffer (plist-get record :buffer)
+                 :command (append '("emacsclient")
+                                  (anvil-worker--emacsclient-server-args
+                                   (plist-get worker :server-file)) '("-e" "t"))
+                 :connection-type 'pipe :noquery t :sentinel #'ignore))
+          (when (anvil-worker--health-current-p record)
+            (setf (plist-get record :timer)
+                  (run-at-time
+                   (max 0 (- (min anvil-worker--health-deadline
+                                  (+ (float-time) anvil-worker-alive-check-timeout))
+                             (float-time)))
+                   nil #'anvil-worker--health-finish record nil))
+            (when (anvil-worker--health-current-p record)
+              (let ((proc (plist-get record :process)))
+                (set-process-sentinel
+                 proc (lambda (child _event)
+                        (when (memq (process-status child) '(exit signal failed closed))
+                          (anvil-worker--health-finish
+                           record (and (eq (process-status child) 'exit)
+                                       (= 0 (process-exit-status child)))))))
+                (setq launched t)
+                (unless (process-live-p proc)
+                  (anvil-worker--health-finish
+                   record (= 0 (process-exit-status proc))))))))
+      (unless launched
+        ;; Constructor errors and quit must not strand the sweep or child.
+        (setf (plist-get record :done) t)
+        (setq anvil-worker--health-probes (delq record anvil-worker--health-probes))
+        (anvil-worker--health-dispose record)))))
+
+(defun anvil-worker--health-pump ()
+  "Launch queued work within the shared sweep deadline and concurrency cap."
+  (unless anvil-worker--health-pumping
+    (let ((anvil-worker--health-pumping t))
+      (condition-case err
+          (while (and anvil-worker--health-sweep anvil-worker--health-queue
+                      (< (length anvil-worker--health-probes)
+                         anvil-worker--health-concurrency)
+                      (< (float-time) anvil-worker--health-deadline))
+            (let ((worker (pop anvil-worker--health-queue)))
+              (cl-incf anvil-worker--health-cursor)
+              (when (plist-get worker :demanded)
+                (let* ((record (anvil-worker--health-record worker))
+                       (reachable (if server-use-tcp
+                                      (anvil-worker--quick-alive-p worker)
+                                    (file-exists-p (plist-get worker :server-file)))))
+                  (when (anvil-worker--health-current-p record)
+                    (if reachable (anvil-worker--health-launch worker)
+                      (anvil-worker--health-result
+                       worker nil nil
+                       (lambda () (anvil-worker--health-current-p record)))))))))
+        ((error quit)
+         (anvil-worker--health-cancel)
+         (signal (car err) (cdr err))))
+      (unless anvil-worker--health-probes
+        (setq anvil-worker--health-queue nil anvil-worker--health-sweep nil)))))
 
 (defun anvil-worker--health-check ()
-  "Sweep every lane and respawn dead workers.  Logs only transitions."
-  (unless anvil-worker--kill-in-progress
-    (unless anvil-worker--pool
-      (anvil-worker--init-pool))
-    (anvil-worker--map-pool #'anvil-worker--health-check-one)))
+  "Start a bounded asynchronous sweep, returning without waiting on children."
+  (unless (or anvil-worker--kill-in-progress anvil-worker--health-sweep)
+    (unless anvil-worker--pool (anvil-worker--init-pool))
+    (setq anvil-worker--health-sweep t
+          anvil-worker--health-deadline
+          (+ (float-time) anvil-worker-alive-check-timeout))
+    (anvil-worker--map-pool
+     (lambda (worker) (push worker anvil-worker--health-queue)))
+    (setq anvil-worker--health-queue (nreverse anvil-worker--health-queue))
+    (when anvil-worker--health-queue
+      (let ((offset (mod anvil-worker--health-cursor
+                         (length anvil-worker--health-queue))))
+        (setq anvil-worker--health-queue
+              (append (nthcdr offset anvil-worker--health-queue)
+                      (cl-subseq anvil-worker--health-queue 0 offset)))))
+    (anvil-worker--health-pump)))
 
 ;;;###autoload
 (defun anvil-worker-health-timer-start ()
@@ -1555,6 +1811,8 @@ Never-demanded lazy workers are not probed or spawned."
   (interactive)
   (when (timerp anvil-worker--health-timer)
     (cancel-timer anvil-worker--health-timer))
+  (setq anvil-worker--health-timer nil)
+  (anvil-worker--health-cancel)
   (setq anvil-worker--health-timer
         (run-with-timer anvil-worker-health-check-interval
                         anvil-worker-health-check-interval
@@ -1572,11 +1830,13 @@ Never-demanded lazy workers are not probed or spawned."
 (defun anvil-worker-health-timer-stop ()
   "Stop periodic pool health checks."
   (interactive)
-  (when (timerp anvil-worker--health-timer)
-    (cancel-timer anvil-worker--health-timer)
+  (let ((timer anvil-worker--health-timer))
+    (when (timerp timer) (cancel-timer timer))
     (setq anvil-worker--health-timer nil)
-    (anvil-worker--log 'timer-stopped)
-    (message "Anvil worker health timer stopped")))
+    (anvil-worker--health-cancel)
+    (when (timerp timer)
+      (anvil-worker--log 'timer-stopped)
+      (message "Anvil worker health timer stopped"))))
 
 ;;; Module enable/disable
 

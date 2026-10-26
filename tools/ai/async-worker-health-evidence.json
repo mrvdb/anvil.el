@@ -1,0 +1,57 @@
+{
+  "old_live": {
+    "baseline_seconds": 0.036344400024972856,
+    "client_seconds": 6.526233400014462,
+    "callback_seconds": 6.18016505241394,
+    "pending_probes": 0,
+    "old_stall_reproduced": true,
+    "private_daemon_stopped": true
+  },
+  "old_acceptance_rejected": true,
+  "protected_snapshots_recorded": true,
+  "native_live": {
+    "baseline_seconds": 0.05342939999536611,
+    "client_seconds": 0.11242689998471178,
+    "callback_seconds": 0.10949587821960449,
+    "pending_probes": 2,
+    "no_duplicate_probes": true,
+    "stop_reaped_probes": true,
+    "stale_callbacks_inert": true,
+    "private_daemon_stopped": true
+  },
+  "linux_live": {
+    "baseline_seconds": 0.005776630001491867,
+    "client_seconds": 0.01020190300005197,
+    "callback_seconds": 0.009479284286499023,
+    "pending_probes": 2,
+    "no_duplicate_probes": true,
+    "stop_reaped_probes": true,
+    "stale_callbacks_inert": true,
+    "private_daemon_stopped": true
+  },
+  "focused_pass": true,
+  "existing_suite_pass": true,
+  "package_lint_pass": true,
+  "ci_pass": false,
+  "merged": false,
+  "installed": false,
+  "focused_native": {
+    "passed": 133,
+    "skipped": 2,
+    "failed": 0
+  },
+  "focused_debian": {
+    "passed": 135,
+    "failed": 0
+  },
+  "preserved_test_names": 68,
+  "worker_source_sha256": "d8e058b76cdbaa3a80d8fe4fbf04cce0f1dc3a70114c36f8ef28a8956e36abf9",
+  "installed_base_compat": {
+    "total": 136,
+    "passed": 134,
+    "skipped": 2,
+    "failed": 0
+  },
+  "timing_failure_retained": "target/worker-health/installed-base-final.log",
+  "timing_repeat_pass": "target/worker-health/installed-base-final-repeat.log"
+}
