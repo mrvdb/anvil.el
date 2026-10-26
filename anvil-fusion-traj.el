@@ -2,7 +2,7 @@
 ;;; anvil-audit: tools-wrapped-at-registration
 
 ;; Author: zawatton + Codex
-;; Keywords: ai, fusion, sqlite
+;; Keywords: ai, fusion, sqlite, tools
 
 ;;; Commentary:
 ;;
@@ -20,6 +20,13 @@
 ;; store with the same public API.
 
 ;;; Code:
+
+;; Builtin-only implementations live behind the optional Emacs 29 boundary.
+(autoload 'anvil-builtin-sqlite-available-p "anvil-builtin-backend")
+(autoload 'anvil-builtin-sqlite-close "anvil-builtin-backend")
+(autoload 'anvil-builtin-sqlite-execute "anvil-builtin-backend")
+(autoload 'anvil-builtin-sqlite-open "anvil-builtin-backend")
+(autoload 'anvil-builtin-sqlite-select "anvil-builtin-backend")
 
 (require 'cl-lib)
 (require 'subr-x)
@@ -62,7 +69,7 @@ This DB lives outside the repository and is never committed."
 
 (defun anvil-fusion-traj--sqlite-available-p ()
   "Return non-nil when builtin SQLite is available."
-  (and (fboundp 'sqlite-available-p) (sqlite-available-p)))
+  (and (fboundp 'sqlite-available-p) (anvil-builtin-sqlite-available-p)))
 
 (defun anvil-fusion-traj--nonempty-string-p (value)
   "Return non-nil when VALUE is a non-blank string."
@@ -104,10 +111,10 @@ This DB lives outside the repository and is never committed."
   (let ((dir (file-name-directory (expand-file-name path))))
     (unless (file-directory-p dir)
       (make-directory dir t)))
-  (let ((db (sqlite-open (expand-file-name path))))
-    (sqlite-execute db "PRAGMA journal_mode=WAL")
+  (let ((db (anvil-builtin-sqlite-open (expand-file-name path))))
+    (anvil-builtin-sqlite-execute db "PRAGMA journal_mode=WAL")
     (dolist (ddl anvil-fusion-traj--schema)
-      (sqlite-execute db ddl))
+      (anvil-builtin-sqlite-execute db ddl))
     db))
 
 (defun anvil-fusion-traj--memory-row->plist (row)
@@ -126,7 +133,7 @@ This DB lives outside the repository and is never committed."
   (let ((path (expand-file-name anvil-fusion-traj-db-path)))
     (when (and anvil-fusion-traj--default-db
                (not (equal path anvil-fusion-traj--resolved-db-path)))
-      (ignore-errors (sqlite-close anvil-fusion-traj--default-db))
+      (ignore-errors (anvil-builtin-sqlite-close anvil-fusion-traj--default-db))
       (setq anvil-fusion-traj--default-db nil
             anvil-fusion-traj--resolved-db-path nil))
     (or anvil-fusion-traj--default-db
@@ -155,12 +162,12 @@ This DB lives outside the repository and is never committed."
 
 (defun anvil-fusion-traj--with-sqlite-tx (db fn)
   "Run FN inside a raw SQLite transaction on DB."
-  (sqlite-execute db "BEGIN IMMEDIATE")
+  (anvil-builtin-sqlite-execute db "BEGIN IMMEDIATE")
   (condition-case err
       (prog1 (funcall fn)
-        (sqlite-execute db "COMMIT"))
+        (anvil-builtin-sqlite-execute db "COMMIT"))
     (error
-     (ignore-errors (sqlite-execute db "ROLLBACK"))
+     (ignore-errors (anvil-builtin-sqlite-execute db "ROLLBACK"))
      (signal (car err) (cdr err)))))
 
 (defun anvil-fusion-traj--rejection-reason (result)
@@ -225,15 +232,15 @@ verification gate and admits any RESULT with a non-empty answer."
               (anvil-fusion-traj--with-sqlite-tx
                backend
                (lambda ()
-                 (sqlite-execute
+                 (anvil-builtin-sqlite-execute
                   backend
                   (concat "INSERT INTO traj "
                           "(created,question,answer,claims,panel,tags,meta) "
                           "VALUES (?,?,?,?,?,?,?)")
                   (list created question answer claims panel tags-text meta))
-                 (let ((id (caar (sqlite-select
+                 (let ((id (caar (anvil-builtin-sqlite-select
                                   backend "SELECT last_insert_rowid()"))))
-                   (sqlite-execute
+                   (anvil-builtin-sqlite-execute
                     backend
                     "INSERT INTO traj_fts(rowid,id,question,answer) VALUES (?,?,?,?)"
                     (list id id question answer))
@@ -266,13 +273,13 @@ Each hit is a plist with :id :score :question and :answer-head."
                limit)
             (let ((rows
                    (or (ignore-errors
-                         (sqlite-select
+                         (anvil-builtin-sqlite-select
                           backend
                           (concat "SELECT id, bm25(traj_fts), question, answer "
                                   "FROM traj_fts WHERE traj_fts MATCH ? "
                                   "ORDER BY bm25(traj_fts), rowid LIMIT ?")
                           (list query limit)))
-                       (sqlite-select
+                       (anvil-builtin-sqlite-select
                         backend
                         (concat "SELECT id, rowid, question, answer "
                                 "FROM traj_fts WHERE traj_fts MATCH ? "
@@ -298,7 +305,7 @@ Each hit is a plist with :id :score :question and :answer-head."
             (when-let ((row (seq-find (lambda (it) (= (plist-get it :id) id))
                                       anvil-fusion-traj--memory-store)))
               (anvil-fusion-traj--memory-row->plist row))
-          (when-let ((row (car (sqlite-select
+          (when-let ((row (car (anvil-builtin-sqlite-select
                                 backend
                                 (concat "SELECT id,created,question,answer,"
                                         "claims,panel,tags,meta "
@@ -315,7 +322,7 @@ Each hit is a plist with :id :score :question and :answer-head."
     (condition-case err
         (if (eq backend 'memory)
             (length anvil-fusion-traj--memory-store)
-          (or (caar (sqlite-select backend "SELECT COUNT(*) FROM traj")) 0))
+          (or (caar (anvil-builtin-sqlite-select backend "SELECT COUNT(*) FROM traj")) 0))
       (error
        (message "anvil-fusion-traj-count: %s" (error-message-string err))
        0))))
@@ -333,9 +340,9 @@ Each hit is a plist with :id :score :question and :answer-head."
           (anvil-fusion-traj--with-sqlite-tx
            backend
            (lambda ()
-             (sqlite-execute backend "DELETE FROM traj WHERE id=?" (list id))
-             (sqlite-execute backend "DELETE FROM traj_fts WHERE rowid=?" (list id))
-             (> (or (caar (sqlite-select backend "SELECT changes()")) 0) 0))))
+             (anvil-builtin-sqlite-execute backend "DELETE FROM traj WHERE id=?" (list id))
+             (anvil-builtin-sqlite-execute backend "DELETE FROM traj_fts WHERE rowid=?" (list id))
+             (> (or (caar (anvil-builtin-sqlite-select backend "SELECT changes()")) 0) 0))))
       (error
        (message "anvil-fusion-traj-delete: %s" (error-message-string err))
        nil))))

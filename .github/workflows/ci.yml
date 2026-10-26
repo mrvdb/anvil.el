@@ -50,6 +50,40 @@ jobs:
             -l tests/anvil-test.el \
             -f ert-run-tests-batch-and-exit
 
+  package-profile-compatibility:
+    # Execute the profile contracts on the supported core floor itself.
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        emacs-version: ['28.2', '31.1']
+      fail-fast: false
+    env:
+      PACKAGE_LINT_DIR: ${{ github.workspace }}/.ci/package-lint
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Emacs
+        uses: purcell/setup-emacs@v8.0
+        with:
+          version: ${{ matrix.emacs-version }}
+
+      - name: Check out verified package-lint 0.24
+        uses: actions/checkout@v4
+        with:
+          repository: purcell/package-lint
+          ref: 6f05a369e0718e93c5dce0951cad5e6646296612
+          path: .ci/package-lint
+
+      - name: Audit core and optional profiles
+        run: bash scripts/lint-package.sh
+
+      - name: Run profile and backend contracts
+        run: |
+          emacs -Q --batch -L . -L tests \
+            -l tests/anvil-package-lint-test.el \
+            -f ert-run-tests-batch-and-exit
+
   full-suite:
     # Full ERT run — every `tests/anvil-*-test.el' file loaded into one
     # emacs --batch so the 640+ test suite runs in a single process.
@@ -57,6 +91,8 @@ jobs:
     # the sexp test fixtures, and live smoke tests (orchestrator, browser)
     # are skip-guarded for all platforms but don't add CI value on Windows.
     runs-on: ubuntu-latest
+    env:
+      PACKAGE_LINT_DIR: ${{ github.workspace }}/.ci/package-lint
     strategy:
       matrix:
         emacs-version: ['31.1']
@@ -64,6 +100,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check out verified package-lint 0.24
+        uses: actions/checkout@v4
+        with:
+          repository: purcell/package-lint
+          ref: 6f05a369e0718e93c5dce0951cad5e6646296612
+          path: .ci/package-lint
 
       - name: Set up Emacs (Linux / macOS)
         if: runner.os != 'Windows'

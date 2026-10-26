@@ -71,9 +71,7 @@
   (anvil-shell-filter-register-from-spec '(:tag uv-sync :description "Compact uv sync/pip install output — strip downloads, short-circuit when up-to-date" :match-command "^uv\\s+(sync|pip\\s+install)\\b" :strip-ansi t :match-output (("Audited \\d+ package" . "ok (up to date)")) :strip-lines-matching ("^\\s*$" "^\\s+Downloading " "^\\s+Using cached " "^\\s+Preparing ") :max-lines 20))
   (anvil-shell-filter-register-from-spec '(:tag xcodebuild :description "Compact xcodebuild output — strip build phases, keep errors/warnings/summary" :match-command "^xcodebuild\\b" :strip-ansi t :strip-lines-matching ("^\\s*$" "^CompileC\\s" "^CompileSwift\\s" "^Ld\\s" "^CreateBuildDirectory\\s" "^MkDir\\s" "^ProcessInfoPlistFile\\s" "^CopySwiftLibs\\s" "^CodeSign\\s" "^Signing Identity:" "^RegisterWithLaunchServices" "^Validate\\s" "^ProcessProductPackaging" "^Touch\\s" "^LinkStoryboards" "^CompileStoryboard" "^CompileAssetCatalog" "^GenerateDSYMFile" "^PhaseScriptExecution" "^PBXCp\\s" "^SetMode\\s" "^SetOwnerAndGroup\\s" "^Ditto\\s" "^CpResource\\s" "^CpHeader\\s" "^\\s+cd\\s+/" "^\\s+export\\s" "^\\s+/Applications/Xcode" "^\\s+/usr/bin/" "^\\s+builtin-" "^note: Using new build system") :max-lines 60 :on-empty "xcodebuild: ok"))
   (anvil-shell-filter-register-from-spec '(:tag yadm :description "Compact yadm (git wrapper) output — same filtering as git" :match-command "^yadm\\b" :strip-ansi t :strip-lines-matching ("^\\s*$" "^\\s*\\(use \"git " "^\\s*\\(use \"yadm ") :truncate-lines-at 120 :max-lines 40))
-  (anvil-shell-filter-register-from-spec '(:tag yamllint :description "Compact yamllint output — strip blank lines, limit rows" :match-command "^yamllint\\b" :strip-ansi t :strip-lines-matching ("^\\s*$") :truncate-lines-at 120 :max-lines 50))
-
-  )
+  (anvil-shell-filter-register-from-spec '(:tag yamllint :description "Compact yamllint output — strip blank lines, limit rows" :match-command "^yamllint\\b" :strip-ansi t :strip-lines-matching ("^\\s*$") :truncate-lines-at 120 :max-lines 50)))
 
 ;; Auto-install on require unless suppressed.
 (unless (bound-and-true-p anvil-shell-filter-builtin-defer-install)

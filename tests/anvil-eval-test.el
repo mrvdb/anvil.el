@@ -175,6 +175,8 @@
                 "(signal 'error (list (make-string 50000 ?b)))")))
       (should (eq 'error (plist-get job :status)))
       (should (string-prefix-p "Error: (error" (plist-get job :result)))
+      (should (string-match-p "showing 2000 of [0-9]+ chars"
+                              (plist-get job :result)))
       (should (< (length (plist-get job :result)) 2200)))))
 
 

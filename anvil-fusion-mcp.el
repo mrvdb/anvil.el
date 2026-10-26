@@ -2,7 +2,7 @@
 ;;; anvil-audit: tools-wrapped-at-registration
 
 ;; Author: zawatton + Claude
-;; Keywords: ai, orchestrator, fusion, mcp
+;; Keywords: ai, orchestrator, fusion, mcp, tools
 
 ;;; Commentary:
 ;;

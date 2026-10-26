@@ -1,4 +1,4 @@
-;;; anvil.el --- An Emacs MCP server — your AI's workbench -*- lexical-binding: t; -*-
+;;; anvil.el --- An MCP server — your AI's workbench -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2025-2026 zawatton
 

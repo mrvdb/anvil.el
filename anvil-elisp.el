@@ -18,7 +18,6 @@
 
 ;; Author: Laurynas Biveinis
 ;; Version: 1.2.0
-;; Package-Requires: ((emacs "27.1"))
 ;; Keywords: tools, development
 ;; URL: https://github.com/zawatton/anvil.el
 
@@ -68,8 +67,8 @@ straight.el, elpaca, or custom package setups.
 
 Example:
   (setq anvil-elisp-additional-allowed-dirs
-        \\='(\"~/.emacs.d/straight/build/\"
-           \"~/.emacs.d/straight/repos/\"
+        \\='(\"~/elisp/straight/build/\"
+           \"~/elisp/straight/repos/\"
            \"~/my-elisp-packages/\"))
 
 Security note: Only add directories you trust, as this allows

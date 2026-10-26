@@ -1796,7 +1796,8 @@ that slip through plist detection (alist entries), otherwise
                      (message (alist-get 'message error-object)))
                 (should (= -32603 (alist-get 'code error-object)))
                 (should
-                 (equal "Internal error executing tool with non-string data"
+                 (equal (concat "Internal error executing tool: "
+                                (error-message-string '(error)))
                         message))
                 (should-not
                  (string-match-p

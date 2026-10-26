@@ -1718,6 +1718,12 @@ If something in this README resonates with you, the most useful signals are thes
 
 * Contributing
 
+Run =make lint-package= to audit the Emacs 28.2 core and the explicit optional
+Emacs 29.1 backend profile. Set =PACKAGE_LINT_DIR= when package-lint is kept in
+a separate checkout. See [[file:docs/package-lint-profiles.md][package lint profiles]] for dependencies, the reviewed
+module manifest, and compatibility checks. =make lint= also runs the existing
+Eask checkdoc audit.
+
 Issues, feature requests, and pull requests are welcome at
 [[https://github.com/zawatton/anvil.el]].
 

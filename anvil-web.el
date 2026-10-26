@@ -4,7 +4,6 @@
 
 ;; Author: Anvil contributors
 ;; Keywords: http, twitter, reddit, tools
-;; Package-Requires: ((emacs "28.1"))
 ;; Version: 0.1.0
 
 ;;; Commentary:
@@ -84,7 +83,7 @@ USER-AGENT (nil → default) wins over any UA already in HEADERS."
          (stripped (cl-remove-if
                     (lambda (h)
                       (and (consp h) (stringp (car h))
-                           (string-equal-ignore-case (car h) "User-Agent")))
+                           (string= (downcase (car h)) "user-agent")))
                     headers)))
     (cons (cons "User-Agent" ua) stripped)))
 

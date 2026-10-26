@@ -26,8 +26,7 @@ HEADER = """;;; anvil-shell-filter-builtin.el --- rtk-derived filter specs (auto
   "Install all built-in rtk-derived filter specs."
 """
 
-FOOTER = """
-  )
+FOOTER = """)
 
 ;; Auto-install on require unless suppressed.
 (unless (bound-and-true-p anvil-shell-filter-builtin-defer-install)
@@ -229,6 +228,8 @@ def generate_elisp(vendor_dir: Path) -> str:
         lines.append(
             f"  (anvil-shell-filter-register-from-spec {render_spec(spec)})\n"
         )
+    if specs:
+        lines[-1] = lines[-1].rstrip("\n")
     lines.append(FOOTER)
     return "".join(lines)
 

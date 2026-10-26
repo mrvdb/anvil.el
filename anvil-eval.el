@@ -613,6 +613,9 @@ expressions require explicit child initialization.
 MCP Parameters:
   expression - Emacs Lisp expression to evaluate asynchronously
                (string, required)
+               Example: \"(byte-compile-file \\\"~/example-init.el\\\")\"
+               Use for long-running operations that would timeout with
+               emacs-eval.
   timeout    - (number) Optional finite wall-clock timeout in seconds"
   (anvil-server-with-error-handling
     (unless (stringp expression)

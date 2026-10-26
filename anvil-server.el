@@ -5,7 +5,6 @@
 ;; Author: Laurynas Biveinis (original mcp-server-lib), zawatton (anvil fork)
 ;; Keywords: comm, tools
 ;; Version: 0.2.1
-;; Package-Requires: ((emacs "27.1"))
 ;; URL: https://github.com/zawatton/anvil.el
 
 ;; This file is NOT part of GNU Emacs.
@@ -1626,35 +1625,26 @@ a tool handler or disclosure hook is trusted as an internal overflow."
         tool-name 'returned raw-bytes projected)))))
 
 (defun anvil-server--legacy-tool-error-text (tool-name class condition)
-  "Reconstruct the historical response text for CLASS and CONDITION."
-  (pcase class
-    ('macro (format "Error: %S" condition))
-    ('generic
-     (format "Internal error executing tool: %s"
-             (error-message-string condition)))
-    ('quit (format "Tool handler quit: %S" condition))
-    ('not-found (format "Tool not found: %s" tool-name))
-    (_ (if (and (consp condition) (stringp (cadr condition)))
-           (cadr condition)
-         "Tool error contained non-string data"))))
+  "Reconstruct historical text using finite condition snapshots."
+  (anvil-server--join-error-segments
+   (anvil-server--bounded-tool-error-segments tool-name class condition)))
 
 (defun anvil-server--bounded-tool-error-segments (tool-name class condition)
-  "Return safe string segments for tool CONDITION without object printing.
+  "Return safe string segments using finite snapshots before object printing.
 The caller projects each segment before concatenating them."
   (let ((data (and (consp condition) (cadr condition))))
     (pcase class
       ('not-found
        (list "Tool not found: " (anvil-server--safe-tool-label tool-name)))
       ('macro
-       (if (stringp data) (list "Error: " data)
-         (list "Tool handler signaled non-string error data")))
+       (list "Error: " (anvil-server--condition-raw-context condition)))
       ('generic
-       (if (stringp data)
-           (list "Internal error executing tool: " data)
-         (list "Internal error executing tool with non-string data")))
+       (list "Internal error executing tool: "
+             (anvil-server--condition-message condition)))
       ('quit
-       (if (stringp data) (list "Tool handler quit: " data)
-         (list "Tool handler quit")))
+       (list "Tool handler quit: " (anvil-server--condition-raw-context condition)))
+      ('fallback
+       (list "Internal error: " (anvil-server--condition-message condition)))
       ('invalid-params
        (list (if (stringp data) data "Invalid tool parameters")))
       ('tool-error
@@ -1713,7 +1703,9 @@ function catches all internal errors and quits so it never signals."
                       (anvil-server--join-error-segments segments)))
                 (anvil-server--legacy-tool-error-text
                  tool-name class condition))))
-        (setq text (substring-no-properties text))
+        (setq text (anvil-server-truncate-text
+                    (substring-no-properties text)
+                    anvil-server-tool-error-max-chars))
         (list :condition (list symbol text) :text text :tool label))
     (quit
      (list :condition (list 'error "")
@@ -1988,7 +1980,7 @@ SERVER-ID is resolved through `anvil-server-id-aliases'."
           context (plist-get sanitized :text))))
       (quit
        (let* ((sanitized
-               (anvil-server--sanitize-tool-error tool-name 'quit err))
+               (anvil-server--sanitize-tool-error tool-name 'fallback err))
               (label (plist-get sanitized :tool)))
          (anvil-server-metrics--track-tool-call label t)
          (anvil-server--metrics-bump
@@ -1998,7 +1990,7 @@ SERVER-ID is resolved through `anvil-server-id-aliases'."
           (plist-get sanitized :text))))
       (error
        (let* ((sanitized
-               (anvil-server--sanitize-tool-error tool-name 'generic err))
+               (anvil-server--sanitize-tool-error tool-name 'fallback err))
               (label (plist-get sanitized :tool)))
          (anvil-server-metrics--track-tool-call label t)
          (anvil-server--metrics-bump
@@ -3622,6 +3614,9 @@ Schema extraction and MCP argument binding still use HANDLER's raw
 signature/docstring via `anvil-server-register-tool'."
   (anvil-server--make-encoded-handler
    handler #'anvil-server-encode-for-mcp))
+
+;; Metrics is loaded by this module; register only after its API is ready.
+(anvil-server-metrics--register-tools)
 
 (provide 'anvil-server)
 ;;; anvil-server.el ends here

@@ -48,6 +48,14 @@
 
 ;;; Code:
 
+;; Builtin-only implementations live behind the optional Emacs 29 boundary.
+(autoload 'anvil-builtin-sqlite-available-p "anvil-builtin-backend")
+(autoload 'anvil-builtin-sqlite-close "anvil-builtin-backend")
+(autoload 'anvil-builtin-sqlite-execute "anvil-builtin-backend")
+(autoload 'anvil-builtin-sqlite-open "anvil-builtin-backend")
+(autoload 'anvil-builtin-sqlite-select "anvil-builtin-backend")
+(autoload 'anvil-builtin-sqlitep "anvil-builtin-backend")
+
 (require 'cl-lib)
 (require 'subr-x)
 (require 'nelisp-state nil 'noerror)
@@ -101,7 +109,7 @@ Installed by `anvil-state-enable' when
 Delegates to `nelisp-state--require-sqlite' when available."
   (if (fboundp 'nelisp-state--require-sqlite)
       (nelisp-state--require-sqlite)
-    (unless (and (fboundp 'sqlite-available-p) (sqlite-available-p))
+    (unless (and (fboundp 'sqlite-available-p) (anvil-builtin-sqlite-available-p))
       (user-error
        "anvil-state: built-in sqlite not available (Emacs 29+ required)"))))
 
@@ -111,14 +119,14 @@ Delegates to `nelisp-state--require-sqlite' when available."
   (unless anvil-state--db
     (let ((dir (file-name-directory anvil-state-db-path)))
       (unless (file-directory-p dir) (make-directory dir t)))
-    (setq anvil-state--db (sqlite-open anvil-state-db-path))
+    (setq anvil-state--db (anvil-builtin-sqlite-open anvil-state-db-path))
     (anvil-state--ensure-schema anvil-state--db))
   anvil-state--db)
 
 (defun anvil-state--close ()
   "Close the cached DB handle (if any)."
-  (when (and anvil-state--db (sqlitep anvil-state--db))
-    (ignore-errors (sqlite-close anvil-state--db)))
+  (when (and anvil-state--db (anvil-builtin-sqlitep anvil-state--db))
+    (ignore-errors (anvil-builtin-sqlite-close anvil-state--db)))
   (setq anvil-state--db nil))
 
 (defun anvil-state--db ()
@@ -132,12 +140,12 @@ Mirrors the portable pattern used by `anvil-org-index' — avoids
   (declare (indent 1) (debug t))
   (let ((db-sym (make-symbol "db")))
     `(let ((,db-sym ,db))
-       (sqlite-execute ,db-sym "BEGIN")
+       (anvil-builtin-sqlite-execute ,db-sym "BEGIN")
        (condition-case err
            (prog1 (progn ,@body)
-             (sqlite-execute ,db-sym "COMMIT"))
+             (anvil-builtin-sqlite-execute ,db-sym "COMMIT"))
          (error
-          (ignore-errors (sqlite-execute ,db-sym "ROLLBACK"))
+          (ignore-errors (anvil-builtin-sqlite-execute ,db-sym "ROLLBACK"))
           (signal (car err) (cdr err)))))))
 
 ;;; Schema
@@ -163,13 +171,13 @@ Mirrors the portable pattern used by `anvil-org-index' — avoids
   "Create the schema on DB when missing and run migrations.
 Phase 1 only knows schema v1."
   (dolist (stmt anvil-state--ddl)
-    (sqlite-execute db stmt))
-  (let* ((row (car (sqlite-select
+    (anvil-builtin-sqlite-execute db stmt))
+  (let* ((row (car (anvil-builtin-sqlite-select
                     db "SELECT version FROM schema_meta LIMIT 1")))
          (current (and row (car row))))
     (cond
      ((null current)
-      (sqlite-execute db "INSERT INTO schema_meta(version) VALUES (?1)"
+      (anvil-builtin-sqlite-execute db "INSERT INTO schema_meta(version) VALUES (?1)"
                       (list anvil-state-schema-version)))
      ((= current anvil-state-schema-version)
       nil)
@@ -265,7 +273,7 @@ raise `user-error' before the DB is touched.  Returns VAL."
          (now (truncate (float-time)))
          (exp (anvil-state--expires-at (list :ttl ttl)))
          (serialized (anvil-state--serialize val)))
-    (sqlite-execute
+    (anvil-builtin-sqlite-execute
      db
      "INSERT INTO kv(ns, k, v, created_at, updated_at, expires_at)
         VALUES (?1, ?2, ?3, ?4, ?4, ?5)
@@ -289,7 +297,7 @@ Expired rows are deleted lazily during the GET that notices them."
   (let* ((db (anvil-state--db))
          (ns* (anvil-state--ns (list :ns ns)))
          (now (truncate (float-time)))
-         (row (car (sqlite-select
+         (row (car (anvil-builtin-sqlite-select
                     db
                     "SELECT v, expires_at FROM kv
                        WHERE ns = ?1 AND k = ?2 LIMIT 1"
@@ -297,7 +305,7 @@ Expired rows are deleted lazily during the GET that notices them."
     (cond
      ((null row) default)
      ((and (nth 1 row) (<= (nth 1 row) now))
-      (sqlite-execute db "DELETE FROM kv WHERE ns = ?1 AND k = ?2"
+      (anvil-builtin-sqlite-execute db "DELETE FROM kv WHERE ns = ?1 AND k = ?2"
                       (list ns* key))
       default)
      (t (anvil-state--deserialize (nth 0 row))))))
@@ -308,12 +316,12 @@ Expired rows are deleted lazily during the GET that notices them."
   (anvil-state--check-string "KEY" key)
   (let* ((db (anvil-state--db))
          (ns* (anvil-state--ns (list :ns ns)))
-         (before (car (sqlite-select
+         (before (car (anvil-builtin-sqlite-select
                        db "SELECT changes()"))))
     (ignore before)
-    (sqlite-execute db "DELETE FROM kv WHERE ns = ?1 AND k = ?2"
+    (anvil-builtin-sqlite-execute db "DELETE FROM kv WHERE ns = ?1 AND k = ?2"
                     (list ns* key))
-    (let ((changed (car (car (sqlite-select db "SELECT changes()")))))
+    (let ((changed (car (car (anvil-builtin-sqlite-select db "SELECT changes()")))))
       (and (integerp changed) (> changed 0)))))
 
 ;;;###autoload
@@ -322,14 +330,14 @@ Expired rows are deleted lazily during the GET that notices them."
   (anvil-state--check-string "NS" ns)
   (let ((db (anvil-state--db)))
     (anvil-state--with-transaction db
-      (sqlite-execute db "DELETE FROM kv WHERE ns = ?1" (list ns))
-      (or (car (car (sqlite-select db "SELECT changes()"))) 0))))
+      (anvil-builtin-sqlite-execute db "DELETE FROM kv WHERE ns = ?1" (list ns))
+      (or (car (car (anvil-builtin-sqlite-select db "SELECT changes()"))) 0))))
 
 ;;;###autoload
 (defun anvil-state-list-ns ()
   "Return the sorted list of namespaces currently holding rows."
   (mapcar #'car
-          (sqlite-select
+          (anvil-builtin-sqlite-select
            (anvil-state--db)
            "SELECT DISTINCT ns FROM kv ORDER BY ns")))
 
@@ -356,7 +364,7 @@ would cross tenant boundaries and is not supported."
                        AND (expires_at IS NULL OR expires_at > ?2)
                      ORDER BY k"))
          (params (if limit (list ns now limit) (list ns now))))
-    (mapcar #'car (sqlite-select db sql params))))
+    (mapcar #'car (anvil-builtin-sqlite-select db sql params))))
 
 ;;;###autoload
 (defun anvil-state-count (&optional ns)
@@ -367,10 +375,10 @@ removes them."
          (row (if ns
                   (progn
                     (anvil-state--check-string "NS" ns)
-                    (car (sqlite-select
+                    (car (anvil-builtin-sqlite-select
                           db "SELECT COUNT(*) FROM kv WHERE ns = ?1"
                           (list ns))))
-                (car (sqlite-select db "SELECT COUNT(*) FROM kv")))))
+                (car (anvil-builtin-sqlite-select db "SELECT COUNT(*) FROM kv")))))
     (or (car row) 0)))
 
 ;;;###autoload
@@ -383,13 +391,13 @@ Returns a plist with `:expired' (rows removed) and `:size-before'
          (size-before (nth 7 (file-attributes anvil-state-db-path)))
          (expired 0))
     (anvil-state--with-transaction db
-      (sqlite-execute
+      (anvil-builtin-sqlite-execute
        db
        "DELETE FROM kv WHERE expires_at IS NOT NULL AND expires_at <= ?1"
        (list now))
-      (setq expired (or (car (car (sqlite-select db "SELECT changes()")))
+      (setq expired (or (car (car (anvil-builtin-sqlite-select db "SELECT changes()")))
                         0)))
-    (sqlite-execute db "VACUUM")
+    (anvil-builtin-sqlite-execute db "VACUUM")
     (list :expired expired
           :size-before size-before
           :size-after (nth 7 (file-attributes anvil-state-db-path)))))
