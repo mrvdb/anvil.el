@@ -487,6 +487,16 @@ empty), so the cache round-trips purely through string ops + `load'
         (throw 'found entry)))
     nil))
 
+(defun anvil-server--remove-list-if (predicate items)
+  "Return ITEMS without elements matching PREDICATE, preserving order.
+Build a fresh list so schema registration never mutates its input or needs
+to autoload the sequence library on a cold standalone runtime."
+  (let (kept)
+    (dolist (item items)
+      (unless (funcall predicate item)
+        (push item kept)))
+    (nreverse kept)))
+
 (defun anvil-server--schema-cache-put (id signature schema fragment)
   "Persist SCHEMA and FRAGMENT for ID and SIGNATURE."
   (anvil-server--schema-cache-load)
@@ -495,7 +505,7 @@ empty), so the cache round-trips purely through string ops + `load'
                     :signature signature
                     :schema schema
                     :fragment fragment)
-              (cl-remove-if
+              (anvil-server--remove-list-if
                (lambda (entry)
                  (and (equal id (plist-get entry :id))
                       (equal signature (plist-get entry :signature))))
@@ -784,7 +794,7 @@ recognised prefix the type defaults to \"string\"."
     (when (memq '&rest arglist)
       (error "MCP tool handlers do not support &rest parameters"))
     (let ((visible-arglist
-           (cl-remove-if
+           (anvil-server--remove-list-if
             (lambda (a)
               (string-prefix-p "_" (symbol-name a)))
             arglist)))

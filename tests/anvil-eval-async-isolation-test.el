@@ -548,30 +548,35 @@
     anvil-eval-async-isolation-terminal-reply-hard-deletes-child ()
   "A successful child cannot survive by blocking its own exit hooks."
   (anvil-eval-async-isolation-test--with-clean-state
-    (let* ((reply
-            (anvil-eval--async
-             "(progn (add-hook 'kill-emacs-hook (lambda () (while t))) 42)"
-             8))
-           (id (anvil-eval-async-isolation-test--job-id reply))
-           (start-deadline (+ (float-time) 3))
-           future)
-      (while (and (null future) (< (float-time) start-deadline))
-        (setq future
-              (plist-get (gethash id anvil-eval--async-jobs) :future))
-        (unless future (accept-process-output nil 0.02)))
-      (should (anvil-future-p future))
-      (let ((child (anvil-future--process future)))
-        (unwind-protect
-            (let ((job (anvil-eval-async-isolation-test--wait id)))
-              (should (eq 'done (plist-get job :status)))
-              (should (equal "42" (plist-get job :result)))
-              (let ((death-deadline (+ (float-time) 2)))
-                (while (and (process-live-p child)
-                            (< (float-time) death-deadline))
-                  (accept-process-output child 0.02 nil t)))
-              (should-not (process-live-p child)))
-          (when (process-live-p child)
-            (delete-process child)))))))
+    (let ((started (symbol-function 'anvil-eval--async-started))
+          future child)
+      (unwind-protect
+          (cl-letf (((symbol-function 'anvil-eval--async-started)
+                     (lambda (job-id started-future)
+                       ;; Terminalization clears the job's transient :future.
+                       ;; Capture its exact child at the real start transition.
+                       (setq future started-future
+                             child (anvil-future--process started-future))
+                       (funcall started job-id started-future))))
+            (let* ((reply
+                    (anvil-eval--async
+                     "(progn (add-hook 'kill-emacs-hook (lambda () (while t))) 42)"
+                     8))
+                   (id (anvil-eval-async-isolation-test--job-id reply))
+                   (start-deadline (+ (float-time) 3)))
+              (while (and (null future) (< (float-time) start-deadline))
+                (accept-process-output nil 0.02))
+              (should (anvil-future-p future))
+              (let ((job (anvil-eval-async-isolation-test--wait id)))
+                (should (eq 'done (plist-get job :status)))
+                (should (equal "42" (plist-get job :result)))
+                (let ((death-deadline (+ (float-time) 2)))
+                  (while (and (process-live-p child)
+                              (< (float-time) death-deadline))
+                    (accept-process-output child 0.02 nil t)))
+                (should-not (process-live-p child)))))
+        (when (and (processp child) (process-live-p child))
+          (delete-process child))))))
 
 (ert-deftest
     anvil-eval-async-isolation-terminal-cleanup-survives-nonlocal-callback ()

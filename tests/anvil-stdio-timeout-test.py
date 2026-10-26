@@ -9,6 +9,7 @@ import shutil
 import signal
 import subprocess
 import tempfile
+import threading
 import time
 from contextlib import contextmanager
 
@@ -50,6 +51,33 @@ def request(method, ident=None):
 def check(ok, message):
     if not ok:
         raise AssertionError(message)
+
+
+REQUEST_WATCHDOG_SECONDS = 6.0
+
+
+def batch_outer_budget(environment, request_count, lifecycle=False):
+    """Outlive the sequential bounded phases, independently of dispatch custody.
+
+    The runner envelope follows the readiness harness: execution/termination,
+    kill escalation and whole-second FIFO rounding.  A request can frame,
+    prepare three metadata/response phases, probe readiness, and dispatch.
+    EOF cleanup can require two further metadata runners.
+    """
+    kill_after = int(environment["ANVIL_EMACSCLIENT_KILL_AFTER_TIMEOUT"])
+
+    def runner(seconds):
+        return 2 * seconds + 3 * kill_after + 3
+
+    parse = runner(int(environment.get("ANVIL_MCP_REQUEST_PARSE_TIMEOUT", "10")))
+    frame_budget = runner(int(environment.get("ANVIL_MCP_FRAME_READ_TIMEOUT", "10")))
+    readiness = runner(int(environment["ANVIL_EMACSCLIENT_READINESS_TIMEOUT"]))
+    dispatch_value = environment["ANVIL_EMACSCLIENT_DISPATCH_TIMEOUT"]
+    dispatch = runner(int(dispatch_value)) if dispatch_value.isdigit() else 0
+    per_request = frame_budget + 3 * parse + readiness + dispatch + 2
+    lifecycle_budget = 2 * (readiness + dispatch) if lifecycle else 0
+    control = int(environment.get("ANVIL_MCP_RUNNER_CONTROL_TIMEOUT", "10"))
+    return request_count * per_request + lifecycle_budget + 2 * parse + 2 * control
 
 
 @contextmanager
@@ -105,6 +133,8 @@ def main():
     if not bash:
         raise RuntimeError("bash unavailable")
     passed = 0
+    max_request_duration = 0.0
+    max_batch_duration = 0.0
     processes = []
     pid_file = [None]
     with managed_tempdir(processes, pid_file) as root:
@@ -132,9 +162,16 @@ def main():
         client.write_text('''#!/usr/bin/env python3
 import base64, json, os, pathlib, re, signal, sys, time
 root = pathlib.Path(os.environ["CASE_ROOT"])
+
+def record_custody(started, method, role):
+    with (root / "timings.jsonl").open("a") as stream:
+        stream.write(json.dumps({"pid": os.getpid(), "started": started,
+                                 "method": method, "role": role}) + "\\n")
+
 args = sys.argv[1:]
 expr = args[args.index("-e") + 1]
 if expr == "t":
+    time.sleep(float(os.environ.get("ANVIL_TEST_TIMEOUT_PROBE_DELAY_SEC", "0")))
     mode = os.environ.get("PROBE_MODE", "plain")
     n = int((root / "state").read_text())
     (root / "state").write_text(str(n + 1))
@@ -152,10 +189,13 @@ if expr.startswith("(") and not "base64-decode-string" in expr:
 encoded = expr.split('base64-decode-string "', 1)[1].split('"', 1)[0]
 req = json.loads(base64.b64decode(encoded))
 method = req["method"]
+started = time.monotonic()
+record_custody(started, method, "client")
 with (root / "calls.jsonl").open("a") as f: f.write(json.dumps(req) + "\\n")
 if method == "hang":
     child = os.fork()
     if child == 0:
+        record_custody(started, method, "child")
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         signal.signal(signal.SIGALRM, signal.SIG_IGN)
         with (root / "pids").open("a") as f: f.write(str(os.getpid()) + "\\n")
@@ -168,6 +208,7 @@ if method == "orphan":
     read_fd, write_fd = os.pipe()
     child = os.fork()
     if child == 0:
+        record_custody(started, method, "child")
         os.close(read_fd)
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         with (root / "pids").open("a") as f: f.write(str(os.getpid()) + "\\n")
@@ -212,10 +253,14 @@ print(f'"anvil-mcp-response-staged:{sequence}:{len(wire)}"')
                    ANVIL_EMACSCLIENT_RETRY_MAX="2", ANVIL_EMACSCLIENT_RETRY_DELAY_MS="0")
 
         def run(data, framed=False, timeout_value="1", init=False, force_fail=False):
+            nonlocal max_request_duration, max_batch_duration
             env["ANVIL_EMACSCLIENT_DISPATCH_TIMEOUT"] = timeout_value
             env["PROBE_MODE"] = "retry" if b'"retry"' in data else (
                 "exhaust" if b'"exhaust"' in data else "plain")
             state.write_text("0")
+            timings = root / "timings.jsonl"
+            timings.write_text("")
+            call_start = len(log.read_text().splitlines()) if log.exists() else 0
             cmd = [str(run_script)]
             if init:
                 cmd += ["--init-function=init-fn", "--stop-function=stop-fn"]
@@ -231,7 +276,60 @@ print(f'"anvil-mcp-response-staged:{sequence}:{len(wire)}"')
                         if pids.exists() and len(pids.read_text().splitlines()) >= 2: break
                         time.sleep(0.05)
                     raise RuntimeError("injected harness failure")
-                out, err = proc.communicate(data, timeout=6)
+                count = data.count(b"Content-Length: ") if framed else len(data.splitlines())
+                outer_budget = batch_outer_budget(env, count, lifecycle=init)
+                watchdog_stop = threading.Event()
+                violations = []
+                observed = {}
+
+                def watch_requests():
+                    while not watchdog_stop.is_set():
+                        for line in timings.read_text().splitlines():
+                            try:
+                                event = json.loads(line)
+                            except json.JSONDecodeError:
+                                continue  # Another process is appending this record.
+                            pid = event["pid"]
+                            if pid in observed:
+                                continue
+                            duration = time.monotonic() - event["started"]
+                            if not alive(pid):
+                                observed[pid] = duration
+                            elif duration >= REQUEST_WATCHDOG_SECONDS:
+                                violations.append(event)
+                                try: os.killpg(proc.pid, signal.SIGKILL)
+                                except ProcessLookupError: pass
+                                for owned in map(int, pids.read_text().splitlines()) if pids.exists() else ():
+                                    try: os.kill(owned, signal.SIGKILL)
+                                    except ProcessLookupError: pass
+                                watchdog_stop.set()
+                                return
+                        watchdog_stop.wait(0.02)
+
+                watcher = threading.Thread(target=watch_requests, daemon=True)
+                watcher.start()
+                try:
+                    out, err = proc.communicate(data, timeout=outer_budget)
+                finally:
+                    watchdog_stop.set()
+                    watcher.join(timeout=1)
+                check(not watcher.is_alive(), "request watchdog did not stop")
+                check(not violations,
+                      f"request custody watchdog expired (limit={REQUEST_WATCHDOG_SECONDS:g}s): {violations!r}")
+                # After EOF no dispatched client or recorded descendant may survive.
+                events = [json.loads(line) for line in timings.read_text().splitlines()]
+                calls = [json.loads(line) for line in log.read_text().splitlines()[call_start:]
+                         if line.startswith("{")] if log.exists() else []
+                check(sum(event["role"] == "client" for event in events) ==
+                      sum("method" in call for call in calls),
+                      "dispatch timing records did not cover every stateful invocation")
+                check(all(not alive(event["pid"]) for event in events),
+                      "bridge returned while request custody remained live")
+                for event in events:
+                    observed.setdefault(event["pid"], time.monotonic() - event["started"])
+                check(all(duration < REQUEST_WATCHDOG_SECONDS for duration in observed.values()),
+                      f"six-second per-request duration exceeded: {observed!r}")
+                max_request_duration = max(max_request_duration, max(observed.values(), default=0))
             except BaseException:
                 try: os.killpg(proc.pid, signal.SIGKILL)
                 except ProcessLookupError: pass
@@ -240,7 +338,9 @@ print(f'"anvil-mcp-response-staged:{sequence}:{len(wire)}"')
                     except ProcessLookupError: pass
                 proc.communicate(timeout=2)
                 raise
-            return proc.returncode, out, err, time.monotonic() - start
+            elapsed = time.monotonic() - start
+            max_batch_duration = max(max_batch_duration, elapsed)
+            return proc.returncode, out, err, elapsed
 
         if args.force_cleanup_check:
             try:
@@ -310,9 +410,10 @@ print(f'"anvil-mcp-response-staged:{sequence}:{len(wire)}"')
                 if framed:
                     check(next_frame == frame(expected_body).encode(),
                           f"next Content-Length frame mismatch: {next_frame!r}")
-                # Two TERM-resistant calls each consume a one-second deadline
-                # and one-second kill grace, plus at most two seconds of setup.
-                check(4.0 <= elapsed < 6.0, f"unexpected timeout duration {elapsed:.2f}s")
+                # Two configured deadline/grace pairs consume at least four
+                # seconds.  Individual custody is independently capped at six;
+                # preparation overhead belongs to the derived batch envelope.
+                check(elapsed >= 4.0, f"unexpected timeout duration {elapsed:.2f}s")
                 ids = list(map(int, pids.read_text().splitlines()))[previous_ids:]
                 # Each hanging call and its same-group child must be gone.
                 for _ in range(20):
@@ -413,7 +514,8 @@ print(f'"anvil-mcp-response-staged:{sequence}:{len(wire)}"')
                 check(rc == 64 and not out and len(log.read_text().splitlines()) == call_count,
                       "timeout=0 bypassed validation without legacy supervisors")
                 passed += 1
-    print(f"PASS {passed} checks ({args.backend} environment; owned runner)")
+    print(f"PASS {passed} checks ({args.backend} environment; owned runner; "
+          f"max-request={max_request_duration:.3f}s; max-batch={max_batch_duration:.3f}s)")
 
 
 if __name__ == "__main__":
