@@ -53,6 +53,27 @@ def check(ok, message):
         raise AssertionError(message)
 
 
+def outcome_evidence(rc, actual, expected, elapsed, stderr):
+    """Describe an outcome without copying unbounded transport output."""
+    def preview(value):
+        if isinstance(value, (bytes, str)):
+            return repr(value[:512]) + ("..." if len(value) > 512 else "")
+        return repr(value)[:512]  # Expected fixture values are small constants.
+
+    return (f"rc={rc!r} actual={preview(actual)} expected={preview(expected)} "
+            f"elapsed={elapsed:.3f}s stderr={preview(stderr)}")
+
+
+def check_json_outcome(rc, out, stderr, elapsed, expected, label):
+    """Check exact response semantics separately from the timing envelope."""
+    evidence = outcome_evidence(rc, out, expected, elapsed, stderr)
+    try:
+        actual = [json.loads(line) for line in out.splitlines()]
+    except (ValueError, UnicodeDecodeError) as error:
+        raise AssertionError(f"{label}: invalid JSON ({type(error).__name__}); {evidence}") from error
+    check(rc == 0 and actual == expected, f"{label}: {evidence}")
+
+
 REQUEST_WATCHDOG_SECONDS = 6.0
 
 
@@ -192,6 +213,7 @@ method = req["method"]
 started = time.monotonic()
 record_custody(started, method, "client")
 with (root / "calls.jsonl").open("a") as f: f.write(json.dumps(req) + "\\n")
+time.sleep(float(os.environ.get("ANVIL_TEST_TIMEOUT_CLIENT_STARTUP_DELAY_SEC", "0")))
 if method == "hang":
     child = os.fork()
     if child == 0:
@@ -339,6 +361,9 @@ print(f'"anvil-mcp-response-staged:{sequence}:{len(wire)}"')
                 proc.communicate(timeout=2)
                 raise
             elapsed = time.monotonic() - start
+            check(elapsed < outer_budget,
+                  f"configured batch phase envelope exceeded: elapsed={elapsed:.3f}s "
+                  f"budget={outer_budget:.3f}s requests={count} lifecycle={init}")
             max_batch_duration = max(max_batch_duration, elapsed)
             return proc.returncode, out, err, elapsed
 
@@ -413,7 +438,11 @@ print(f'"anvil-mcp-response-staged:{sequence}:{len(wire)}"')
                 # Two configured deadline/grace pairs consume at least four
                 # seconds.  Individual custody is independently capped at six;
                 # preparation overhead belongs to the derived batch envelope.
-                check(elapsed >= 4.0, f"unexpected timeout duration {elapsed:.2f}s")
+                deadline_and_grace = (int(env["ANVIL_EMACSCLIENT_DISPATCH_TIMEOUT"]) +
+                                      int(env["ANVIL_EMACSCLIENT_KILL_AFTER_TIMEOUT"]))
+                check(elapsed >= 2 * deadline_and_grace,
+                      f"two timeout/grace phases ended prematurely: elapsed={elapsed:.3f}s "
+                      f"minimum={2 * deadline_and_grace}s")
                 ids = list(map(int, pids.read_text().splitlines()))[previous_ids:]
                 # Each hanging call and its same-group child must be gone.
                 for _ in range(20):
@@ -425,24 +454,29 @@ print(f'"anvil-mcp-response-staged:{sequence}:{len(wire)}"')
             if args.backend == "perl":
                 # A single integer phase timeout also bounds the process group.
                 previous_ids = len(pids.read_text().splitlines())
-                rc, out, _, elapsed = run((request("hang", 8) + "\n").encode(), timeout_value="1")
+                rc, out, err, elapsed = run((request("hang", 8) + "\n").encode(), timeout_value="1")
                 check(rc == 0 and b"Bridge synthetic error" in out and
                       json.loads(out)["error"]["data"]["emacsclientRc"] == 124,
-                      "integer timeout response mismatch")
-                check(1.8 <= elapsed < 4.0, f"integer timeout duration was {elapsed:.2f}s")
+                      "integer timeout response mismatch: " +
+                      outcome_evidence(rc, out, "dispatch timeout rc=124", elapsed, err))
+                deadline_and_grace = (int(env["ANVIL_EMACSCLIENT_DISPATCH_TIMEOUT"]) +
+                                      int(env["ANVIL_EMACSCLIENT_KILL_AFTER_TIMEOUT"]))
+                check(elapsed >= deadline_and_grace,
+                      f"integer timeout/grace ended prematurely: elapsed={elapsed:.3f}s "
+                      f"minimum={deadline_and_grace}s")
                 ids = list(map(int, pids.read_text().splitlines()))[previous_ids:]
                 check(len(ids) == 2 and all(not alive(pid) for pid in ids),
                       f"integer timeout leaked process group: {[(pid, alive(pid)) for pid in ids]}")
                 passed += 2
                 previous_ids = len(pids.read_text().splitlines())
-                rc, out, _, elapsed = run((request("orphan", 9) + "\n" +
+                rc, out, err, elapsed = run((request("orphan", 9) + "\n" +
                                            request("after", 13) + "\n").encode())
                 expected = [
                     {"jsonrpc": "2.0", "id": 9, "result": {"method": "orphan"}},
                     {"jsonrpc": "2.0", "id": 13, "result": {"method": "after"}},
                 ]
-                check(rc == 0 and [json.loads(x) for x in out.splitlines()] == expected
-                      and elapsed < 3.0, "orphan response or subsequent request failed")
+                check_json_outcome(rc, out, err, elapsed, expected,
+                                   "orphan response or subsequent request failed")
                 ids = list(map(int, pids.read_text().splitlines()))[previous_ids:]
                 check(len(ids) == 1 and all(not alive(pid) for pid in ids),
                       f"orphan holding stdout survived: {[(pid, alive(pid)) for pid in ids]}")
