@@ -1,7 +1,7 @@
 {
-  "workflow_run": 40260314928,
-  "url": "https://github.com/zawatton/anvil.el/actions/runs/40260314928",
-  "tested_commit": "0dff843d63f2b15f571439d8d447c39d07e339a1",
+  "workflow_run": 40261973729,
+  "url": "https://github.com/zawatton/anvil.el/actions/runs/40261973729",
+  "tested_commit": "23725c543c9e51eff16255d1c36b8108c32a243b",
   "matrix": {
     "28.2": "success",
     "31.1": "success"
@@ -267,7 +267,7 @@
     "tests/anvil-stdio-readiness-test.el": "6c53b214381e07b9bfac9b0c5ceb2cc23a977018d8e56b55344590b4bcbc4a47",
     "tests/anvil-stdio-readiness-test.py": "5db014366701f93f05a7fc9f79f42b74fca245f1b61f7d651ac40c3d1b55526b",
     "tests/anvil-stdio-timeout-test.el": "6dd58ed7a5b92fb2b47b5d6ea6f9d6cb65f9c268839bf72ec50bb145edbe2413",
-    "tests/anvil-stdio-timeout-test.py": "186b1281aab0a50e52d85509fa1b61a38b4901b7ace5a95b64d72a5085c75780",
+    "tests/anvil-stdio-timeout-test.py": "b97f3d7147f33bc8da358619c1489b08dd51cde794cd3f1d862f393866c825fc",
     "tests/anvil-test-fixtures.el": "9cf9bf814831d0ddda2000cef05b8fdfc4dbe3c636e17ae77c1fc739651ba9f6",
     "tests/anvil-test.el": "047ffe4572fa4062eaf2fab564dc351cf63fb8f519721b9c1f5c80abe876dcca",
     "tests/anvil-treesit-backend-test.el": "02071e69aca23cc267f00e74e2b2745da4c659ae9d13ba7f38428a5bd648a980",
@@ -286,13 +286,5 @@
     "tests/fixtures/ts-sample/app.ts": "2ca3cb6e4e38fc3557e7a93fad5260df707ae7107c721c04d7f1a2d40cf7278c",
     "tests/fixtures/tsx-sample/app.tsx": "23f429bf96e187e1c816772c8efb0d40ec4e0f934b7959698e78d723e75d9f52",
     "tests/m2-bootsmoke-test.el": "461c4c0174a831c07f6c0906040cd1e3b1d75b50616f8b5208f3eb31823c5ff0"
-  },
-  "excluded_generated_artifacts": [
-    "__pycache__",
-    "*.pyc",
-    "*.elc",
-    "*.eln",
-    "*.log",
-    "*.tmp"
-  ]
+  }
 }
