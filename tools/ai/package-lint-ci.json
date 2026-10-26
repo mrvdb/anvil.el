@@ -1,7 +1,7 @@
 {
-  "workflow_run": 40261973729,
-  "url": "https://github.com/zawatton/anvil.el/actions/runs/40261973729",
-  "tested_commit": "23725c543c9e51eff16255d1c36b8108c32a243b",
+  "workflow_run": 40271435383,
+  "url": "https://github.com/zawatton/anvil.el/actions/runs/40271435383",
+  "tested_commit": "a05df906081b9d3cb84dec350110a6a930f12439",
   "matrix": {
     "28.2": "success",
     "31.1": "success"
@@ -114,7 +114,7 @@
     "anvil-wl-sync.el": "dde7b3987d21eb44830145d7cd34ecb7b4924414fb742abaa67b6e0a6df0369c",
     "anvil-wl-wanderlust.el": "302226348be617ce93528fe2d2c939f276b9e083b1734144070616cc2c9fe7dd",
     "anvil-wl.el": "bc0a72ce4416719b323bd56d20431f5ba43fdbe57f15541bbb106d0103dbebed",
-    "anvil-worker.el": "5da494a0944e9cd888f65d4f2fd784a2372f0d2ab18a7b845382118d81657603",
+    "anvil-worker.el": "d8e058b76cdbaa3a80d8fe4fbf04cce0f1dc3a70114c36f8ef28a8956e36abf9",
     "anvil-worklog.el": "ff8e5e94721b36ee98df081e2e288ba2b31da8f0f81889e6fbdbe5cd7c7f94ee",
     "anvil-xlsx.el": "e831f7fef41d7e4d707ebe790783d973ae376dc7ec301354b48253537c527ef3",
     "anvil.el": "70f1770da370384b1a6d56f6fefe5f94b6a07725af8706d525a5a0d8848b89b9",
@@ -277,8 +277,11 @@
     "tests/anvil-wl-filter-test.el": "3cb09014a30607583b011e9b6d058e7049fc6f7c4f95c53d0328faaa4317c077",
     "tests/anvil-wl-sync-test.el": "d51893285b34331a49b6517b591626c12e505f02ca5f2104b050f141307c8e3b",
     "tests/anvil-wl-test.el": "db0177c18abbaa00b89cc691b1648bb8beb775b39b0e555003ddef301cc3cf93",
+    "tests/anvil-worker-health-async-test.el": "75d5bed15973857ed6714204cbcb8e6e79e31444e804c488db41785838e8f206",
+    "tests/anvil-worker-health-live-test.el": "04faebfd623f169f233cec5f8a4d76de9ad4936e59eb566db52e6399f813065d",
+    "tests/anvil-worker-health-live-test.py": "dce4e8c84dbce60e25823d303087b6a418d6966309dd910b9c206fd70d0f4653",
     "tests/anvil-worker-pool-test.el": "ac2b6e85a391ca0d0dc6b655398167afb619e05acb21591ae9c0476726585bd9",
-    "tests/anvil-worker-test.el": "39e858ac1e0215cd89743827b7e3324d8c9a15b44c4536d2e77566fcc1be2cef",
+    "tests/anvil-worker-test.el": "c413880adfa065eb21569058cd58df974666863e57b784ac67b7f20c579b2772",
     "tests/anvil-worklog-test.el": "22d3602d74d699c399c4989ec31b9719a3b0d1f9cb4df0b31684bacfc18b06d0",
     "tests/fixtures/js-sample/app.js": "0092bd229854d788b5bb311d91b08d374d9bc4978d93d68ce29f9bd2a957d6f1",
     "tests/fixtures/jsx-sample/app.jsx": "39b439ee45adb8bfef00fbf7813e048560717fb1ebc554b6ef8f6fcc34edb090",
