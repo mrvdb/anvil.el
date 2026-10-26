@@ -392,33 +392,30 @@ Disable health timer + spawning so no real subprocesses start."
 
 (ert-deftest anvil-worker-test-probe-timeout-kills-child-and-buffer ()
   "A hung emacsclient child is killed at timeout and its buffer is removed."
-  (let* ((dir (make-temp-file "anvil-worker-probe-" t))
-         (wrapper (expand-file-name "emacsclient" dir))
-         (real-emacs (or (executable-find invocation-name)
+  (let* ((real-emacs (or (executable-find invocation-name)
                          (expand-file-name invocation-name invocation-directory)))
-         (process-environment (copy-sequence process-environment))
-         (exec-path (cons dir exec-path))
+         (server-use-tcp t)
          (anvil-worker-alive-check-timeout 0.2)
          (started (float-time))
-         captured buffer)
+         captured buffer requested-command)
     (unwind-protect
         (progn
-          (with-temp-file wrapper
-            (insert "#!/bin/sh\nexec " (shell-quote-argument real-emacs)
-                    " --batch --eval '(sleep-for 30)'\n"))
-          (set-file-modes wrapper #o755)
-          (setenv "PATH" (concat dir path-separator (getenv "PATH")))
           (let ((original (symbol-function 'make-process)))
             (cl-letf (((symbol-function 'make-process)
                        (lambda (&rest args)
                          (setq buffer (plist-get args :buffer))
+                         (setq requested-command (plist-get args :command))
+                         ;; Exercise a real child without relying on shell scripts.
+                         (setq args (plist-put args :command
+                                              (list real-emacs "-Q" "--batch"
+                                                    "--eval" "(sleep-for 30)")))
                          (setq captured (apply original args))))
                       ((symbol-function 'anvil-worker--log)
                        (lambda (&rest _) nil)))
               (should-not (anvil-worker--probe-emacsclient "/tmp/no-server"))))
           (should captured)
-          (should (equal wrapper (executable-find "emacsclient")))
-          (should (equal "emacsclient" (car (process-command captured))))
+          (should (equal '("emacsclient" "-a" "false" "-f" "/tmp/no-server" "-e" "t")
+                         requested-command))
           (should (> (- (float-time) started) 0.1))
           (should-not (process-live-p captured))
           (should-not (buffer-live-p buffer))
@@ -430,8 +427,7 @@ Disable health timer + spawning so no real subprocesses start."
               (should-error (anvil-worker--probe-emacsclient "/tmp/no-server")))
             (should-not (buffer-live-p failed-buffer))))
       (when (and captured (process-live-p captured))
-        (delete-process captured))
-      (when (file-directory-p dir) (delete-directory dir t)))))
+        (delete-process captured)))))
 
 (ert-deftest anvil-worker-test-probe-quit-cleans-child-and-buffer ()
   "A quit after child launch still kills that child and removes its buffer."
@@ -1466,5 +1462,90 @@ deadlock on Windows (2026-04-16) that could not be broken with
         ;; kill before spawn — order matters so the new daemons don't
         ;; collide with the old server files before they're cleaned up
         (should (equal '(kill spawn) (nreverse calls)))))))
+
+(defmacro anvil-worker-test--with-startup-file (attributes &rest body)
+  "Run BODY with a temporary TCP auth file and process ATTRIBUTES."
+  (declare (indent 1))
+  `(let* ((server-file (make-temp-file "anvil-worker-startup-"))
+          (server-use-tcp t)
+          (anvil-worker-emacs-bin "C:/Emacs/bin/emacs.exe")
+          (worker (list :lane :write :name "anvil-worker-write-1"
+                        :server-file server-file)))
+     (unwind-protect
+         (progn
+           (with-temp-file server-file (insert "127.0.0.1:12345 5992\nsecret\n"))
+           (set-file-times server-file (seconds-to-time 1000000))
+           (cl-letf (((symbol-function 'process-attributes)
+                      (lambda (pid) (should (= pid 5992)) ,attributes))
+                     ((symbol-function 'w32-convert-standard-filename) #'identity)
+                     ((symbol-function 'anvil-worker--log) (lambda (&rest _) nil)))
+             (let ((system-type 'windows-nt)) ,@body)))
+       (when (file-exists-p server-file) (delete-file server-file)))))
+
+(ert-deftest anvil-worker-test-startup-different-executable-reuse ()
+  "A live unrelated process cannot keep a stale worker auth file alive."
+  (anvil-worker-test--with-startup-file '((comm . "AdskLicensingService.exe"))
+    (should (anvil-worker--server-file-stale-p server-file))))
+
+(ert-deftest anvil-worker-test-startup-same-executable-newer-process ()
+  "PID reuse by another Emacs is detected through process start time."
+  (anvil-worker-test--with-startup-file
+      `((comm . "emacs.exe") (start . ,(seconds-to-time 1000001)))
+    (should (anvil-worker--server-file-stale-p server-file))))
+
+(ert-deftest anvil-worker-test-startup-valid-worker-preserved ()
+  "An older Emacs worker survives case and optional executable suffixes."
+  (anvil-worker-test--with-startup-file
+      `((comm . "EMACS") (start . ,(seconds-to-time 999999)))
+    (should (anvil-worker--quick-alive-p worker))
+    (should (file-exists-p server-file))))
+
+(ert-deftest anvil-worker-test-startup-unknown-metadata-preserved ()
+  "Unavailable identity or start metadata does not prove PID reuse."
+  (dolist (attributes '(((pid . 5992)) ((comm . "emacs.exe"))
+                        ((comm . "") (start . unknown))))
+    (anvil-worker-test--with-startup-file attributes
+      (should-not (anvil-worker--server-file-stale-p server-file))
+      (should (file-exists-p server-file)))))
+
+(ert-deftest anvil-worker-test-startup-removes-stale-file-before-spawn ()
+  "Startup removes only its stale auth file before launching the worker."
+  (anvil-worker-test--with-startup-file '((comm . "AdskLicensingService.exe"))
+    (let ((anvil-worker-init-file "worker-init.el") (spawned nil))
+      (cl-letf (((symbol-function 'start-process)
+                 (lambda (&rest _)
+                   (should-not (file-exists-p server-file))
+                   (setq spawned t) 'fake-process))
+                ((symbol-function 'set-process-query-on-exit-flag) #'ignore)
+                ((symbol-function 'process-id) (lambda (_) 12345))
+                ((symbol-function 'anvil-worker--maybe-schedule-warmup) #'ignore)
+                ((symbol-function 'anvil-worker--probe-emacsclient)
+                 (lambda (&rest _) (ert-fail "Startup must not probe"))))
+        (should (eq 'fake-process (anvil-worker--spawn-worker worker)))
+        (should spawned)))))
+
+(ert-deftest anvil-worker-test-startup-valid-worker-skips-spawn ()
+  "An existing worker is retained without a subprocess probe or spawn."
+  (anvil-worker-test--with-startup-file
+      `((comm . "emacs.exe") (start . ,(seconds-to-time 999999)))
+    (cl-letf (((symbol-function 'start-process)
+               (lambda (&rest _) (ert-fail "Live worker must not spawn")))
+              ((symbol-function 'anvil-worker--probe-emacsclient)
+               (lambda (&rest _) (ert-fail "Startup must not probe"))))
+      (should-not (anvil-worker--spawn-worker worker))
+      (should (file-exists-p server-file)))))
+
+(ert-deftest anvil-worker-test-startup-unix-socket-preserved ()
+  "Local socket liveness uses the cached path without inspecting a PID."
+  (let ((server-use-tcp nil))
+    (cl-letf (((symbol-function 'make-network-process)
+               (lambda (&rest args)
+                 (should (equal (plist-get args :service) "/tmp/worker-socket"))
+                 'socket-probe))
+              ((symbol-function 'delete-process)
+               (lambda (proc) (should (eq proc 'socket-probe))))
+              ((symbol-function 'process-attributes)
+               (lambda (_) (ert-fail "Socket must not inspect PID"))))
+      (should-not (anvil-worker--server-file-stale-p "/tmp/worker-socket")))))
 
 ;;; anvil-worker-test.el ends here

@@ -1,0 +1,23 @@
+#+TITLE: Nonblocking worker health monitoring
+
+* S1 Async health lifecycle
+
+** S1.1 Reproduce the old stall and retain protected source snapshots
+cmd: python -c "import json,pathlib; d=json.loads(pathlib.Path('tools/ai/async-worker-health-evidence.json').read_text()); assert d['old_acceptance_rejected'] and d['protected_snapshots_recorded'] and d['old_live']['callback_seconds']>5 and d['old_live']['client_seconds']>5 and d['old_live']['private_daemon_stopped']"
+
+** S1.2 Pass focused health, ownership, cancellation and recovery contracts
+cmd: python -c "import json,pathlib,hashlib; d=json.loads(pathlib.Path('tools/ai/async-worker-health-evidence.json').read_text()); assert d['focused_pass'] and d['focused_native']['failed']==0 and d['focused_debian']['failed']==0; assert hashlib.sha256(pathlib.Path('anvil-worker.el').read_bytes().replace(bytes([13,10]),bytes([10]))).hexdigest()==d['worker_source_sha256']"
+
+** S1.3 Pass real unresponsive-worker monitoring with concurrent clients and cleanup
+cmd: python -c "import json,pathlib; d=json.loads(pathlib.Path('tools/ai/async-worker-health-evidence.json').read_text()); assert all(d[n]['callback_seconds']<1 and d[n]['client_seconds']<1 and d[n]['no_duplicate_probes'] and d[n]['stop_reaped_probes'] and d[n]['stale_callbacks_inert'] and d[n]['private_daemon_stopped'] for n in ['native_live','linux_live'])"
+
+* S2 Integration and adoption
+
+** S2.1 Pass the existing worker regression suite and compatibility checks
+cmd: python -c "import json,pathlib; d=json.loads(pathlib.Path('tools/ai/async-worker-health-evidence.json').read_text()); assert d['existing_suite_pass'] and d['package_lint_pass'] and d['preserved_test_names']==68 and d['installed_base_compat']['failed']==0 and d['installed_base_compat']['total']>=136"
+
+** S2.2 Pass final-head CI and integrate the reviewed change
+pending
+
+** S2.3 Verify installed GUI behavior while preserving user changes and startup policy
+pending
