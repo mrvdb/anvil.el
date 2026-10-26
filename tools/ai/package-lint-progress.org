@@ -1,0 +1,21 @@
+#+TITLE: Package lint profiles with an Emacs 28.2 core
+#+VALIDATED-WITH: GNU Emacs 30.1; package-lint 0.24 (6f05a36)
+#+VALIDATION: 103 modules lint clean; 8 contract tests and 90 mixed-backend tests pass
+#+LIMITATION: Emacs 28.2 is unavailable; the installed 29.4.50 binary cannot load libMagickWand-6.Q16.so.6
+
+* S1 Profile and compatibility acceptance
+
+** S1.1 Core floor stays at Emacs 28.2
+cmd: grep -F 'Package-Requires: ((emacs "28.2"))' anvil.el
+
+** S1.2 Core rejects direct Emacs 29 calls and wrappers preserve behavior
+cmd: emacs -Q --batch -L . -L tests -l tests/anvil-package-lint-test.el -f ert-run-tests-batch-and-exit
+
+** S1.3 Mixed backend regression tests pass
+cmd: emacs -Q --batch -L . -L tests -l tests/anvil-state-test.el -l tests/anvil-org-index-test.el -l tests/anvil-treesit-backend-test.el -f ert-run-tests-batch-and-exit
+
+** S1.4 Documented package lint entrypoint succeeds
+cmd: make lint-package
+
+** S1.5 Actual Emacs 28.2 CI profile and contract job passes
+pending

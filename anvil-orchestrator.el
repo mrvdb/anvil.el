@@ -40,6 +40,9 @@
 
 ;;; Code:
 
+;; Builtin-only implementations live behind the optional Emacs 29 boundary.
+(autoload 'anvil-builtin-sqlite-select "anvil-builtin-backend")
+
 (require 'cl-lib)
 (require 'subr-x)
 (require 'json)
@@ -1545,7 +1548,7 @@ re-queue them without breaking `:depends-on' chains."
   (setq anvil-orchestrator--queue nil)
   (condition-case _err
       (let ((rows (ignore-errors
-                    (sqlite-select
+                    (anvil-builtin-sqlite-select
                      (anvil-state--db)
                      "SELECT v FROM kv WHERE ns = ?1"
                      (list anvil-orchestrator--state-ns)))))
@@ -2520,7 +2523,7 @@ When any pairwise similarity drops below this, the verdict becomes
   (clrhash anvil-orchestrator--consensus-groups)
   (condition-case _err
       (let ((rows (ignore-errors
-                    (sqlite-select
+                    (anvil-builtin-sqlite-select
                      (anvil-state--db)
                      "SELECT k, v FROM kv WHERE ns = ?1"
                      (list anvil-orchestrator--consensus-state-ns)))))
@@ -3853,7 +3856,7 @@ Each entry is `(:key KEY :chars N)' with N the character length
 of the stored text.  Sorted ascending by key."
   (anvil-state-enable)
   (let ((rows (ignore-errors
-                (sqlite-select
+                (anvil-builtin-sqlite-select
                  (anvil-state--db)
                  "SELECT k, v FROM kv WHERE ns = ?1 ORDER BY k"
                  (list anvil-orchestrator--preamble-ns)))))
@@ -4484,7 +4487,7 @@ status change.")
   "Return every persisted orchestrator task plist from `anvil-state'."
   (anvil-state-enable)
   (condition-case _err
-      (cl-loop for row in (sqlite-select
+      (cl-loop for row in (anvil-builtin-sqlite-select
                            (anvil-state--db)
                            "SELECT k, v FROM kv WHERE ns = ?1"
                            (list anvil-orchestrator--state-ns))

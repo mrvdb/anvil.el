@@ -57,6 +57,13 @@
 
 ;;; Code:
 
+;; Builtin-only implementations live behind the optional Emacs 29 boundary.
+(autoload 'anvil-builtin-sqlite-available-p "anvil-builtin-backend")
+(autoload 'anvil-builtin-sqlite-close "anvil-builtin-backend")
+(autoload 'anvil-builtin-sqlite-execute "anvil-builtin-backend")
+(autoload 'anvil-builtin-sqlite-open "anvil-builtin-backend")
+(autoload 'anvil-builtin-sqlite-select "anvil-builtin-backend")
+
 (require 'cl-lib)
 (require 'anvil-server)
 
@@ -155,10 +162,10 @@ kind, not before.")
   "Return non-nil when DB's SQLite build ships the FTS5 trigram tokenizer."
   (condition-case nil
       (progn
-        (sqlite-execute
+        (anvil-builtin-sqlite-execute
          db "CREATE VIRTUAL TABLE anvil_session_trigram_probe
                USING fts5(x, tokenize=trigram)")
-        (sqlite-execute db "DROP TABLE anvil_session_trigram_probe")
+        (anvil-builtin-sqlite-execute db "DROP TABLE anvil_session_trigram_probe")
         t)
     (error nil)))
 
@@ -172,20 +179,20 @@ kind, not before.")
 
 (defun anvil-session-store--fts-exists-p (db)
   "Return non-nil when the `session_events' table exists in DB."
-  (caar (sqlite-select
+  (caar (anvil-builtin-sqlite-select
          db "SELECT 1 FROM sqlite_master
               WHERE type='table' AND name='session_events'")))
 
 (defun anvil-session-store--apply-schema (db)
   "Create the event table and metadata table on DB when absent."
-  (sqlite-execute db "PRAGMA journal_mode = WAL")
-  (sqlite-execute
+  (anvil-builtin-sqlite-execute db "PRAGMA journal_mode = WAL")
+  (anvil-builtin-sqlite-execute
    db "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
   (unless (anvil-session-store--fts-exists-p db)
     (let ((tok (anvil-session-store--resolve-tokenizer db)))
       ;; Column order is load-bearing: `anvil-session-store--bm25-weights'
       ;; supplies one weight per column, positionally.
-      (sqlite-execute
+      (anvil-builtin-sqlite-execute
        db (format "CREATE VIRTUAL TABLE session_events USING fts5(
                      session_id UNINDEXED,
                      seq        UNINDEXED,
@@ -198,7 +205,7 @@ kind, not before.")
                      summary,
                      tokenize = %s)"
                   (symbol-name tok)))
-      (sqlite-execute
+      (anvil-builtin-sqlite-execute
        db "INSERT OR REPLACE INTO meta(key, value) VALUES ('tokenizer', ?)"
        (list (symbol-name tok))))))
 
@@ -216,7 +223,7 @@ gives markdown headings.  `tool' gets 2.0, prose `summary' 1.0.")
   "Return non-nil when this runtime can back the store with SQLite."
   (and (fboundp 'sqlite-open)
        (or (not (fboundp 'sqlite-available-p))
-           (sqlite-available-p))))
+           (anvil-builtin-sqlite-available-p))))
 
 (defun anvil-session-store--db ()
   "Return the open database handle, opening and migrating it if needed."
@@ -228,7 +235,7 @@ gives markdown headings.  `tool' gets 2.0, prose `summary' 1.0.")
       (when (and dir (not (file-directory-p dir)))
         (make-directory dir t)))
     (setq anvil-session-store--db
-          (sqlite-open (expand-file-name anvil-session-store-db-path)))
+          (anvil-builtin-sqlite-open (expand-file-name anvil-session-store-db-path)))
     (anvil-session-store--apply-schema anvil-session-store--db))
   anvil-session-store--db)
 
@@ -236,7 +243,7 @@ gives markdown headings.  `tool' gets 2.0, prose `summary' 1.0.")
 (defun anvil-session-store-close ()
   "Close the database handle if one is open."
   (when anvil-session-store--db
-    (ignore-errors (sqlite-close anvil-session-store--db))
+    (ignore-errors (anvil-builtin-sqlite-close anvil-session-store--db))
     (setq anvil-session-store--db nil)))
 
 ;;;; --- writing ------------------------------------------------------------
@@ -251,7 +258,7 @@ gives markdown headings.  `tool' gets 2.0, prose `summary' 1.0.")
 
 (defun anvil-session-store--next-seq (db session-id)
   "Return the next per-session sequence number for SESSION-ID in DB."
-  (let ((row (caar (sqlite-select
+  (let ((row (caar (anvil-builtin-sqlite-select
                     db "SELECT MAX(CAST(seq AS INTEGER)) FROM session_events
                          WHERE session_id = ?"
                     (list session-id)))))
@@ -289,7 +296,7 @@ Keyword arguments:
          (summary* (anvil-session-store--clamp
                     summary anvil-session-store-summary-max-chars))
          (data* (anvil-session-store--clamp data 500)))
-    (sqlite-execute
+    (anvil-builtin-sqlite-execute
      db "INSERT INTO session_events
            (session_id, seq, ts, kind, category, priority, tool, data, summary)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
@@ -305,11 +312,11 @@ Keyword arguments:
 Returns the number of rows removed."
   (let* ((db (anvil-session-store--db))
          (cutoff (- (float-time) (or ttl-sec anvil-session-store-ttl-sec)))
-         (before (caar (sqlite-select
+         (before (caar (anvil-builtin-sqlite-select
                         db "SELECT COUNT(*) FROM session_events"))))
-    (sqlite-execute db "DELETE FROM session_events WHERE CAST(ts AS REAL) < ?"
+    (anvil-builtin-sqlite-execute db "DELETE FROM session_events WHERE CAST(ts AS REAL) < ?"
                     (list cutoff))
-    (let ((after (caar (sqlite-select
+    (let ((after (caar (anvil-builtin-sqlite-select
                         db "SELECT COUNT(*) FROM session_events"))))
       (max 0 (- (or before 0) (or after 0))))))
 
@@ -343,13 +350,13 @@ Returns the number of rows removed."
   (let* ((db (anvil-session-store--db))
          (limit (or limit 20))
          (rows (if session-id
-                   (sqlite-select
+                   (anvil-builtin-sqlite-select
                     db (format "SELECT %s FROM session_events
                                  WHERE session_id = ?
                                  ORDER BY CAST(ts AS REAL) DESC LIMIT %d"
                                anvil-session-store--select-columns limit)
                     (list session-id))
-                 (sqlite-select
+                 (anvil-builtin-sqlite-select
                   db (format "SELECT %s FROM session_events
                                ORDER BY CAST(ts AS REAL) DESC LIMIT %d"
                              anvil-session-store--select-columns limit)))))
@@ -495,7 +502,7 @@ seq), which is unique per row."
           (setq scope " AND session_id = ?"
                 params (append params (list session-id))))
         (mapcar #'anvil-session-store--row->plist
-                (sqlite-select
+                (anvil-builtin-sqlite-select
                  db (format "SELECT %s FROM session_events
                               WHERE session_events MATCH ?%s
                               ORDER BY bm25(session_events, %s)
@@ -524,7 +531,7 @@ seq), which is unique per row."
         (setq scope " AND session_id = ?"
               params (append params (list session-id))))
       (mapcar #'anvil-session-store--row->plist
-              (sqlite-select
+              (anvil-builtin-sqlite-select
                db (format "SELECT %s FROM session_events
                             WHERE (%s)%s
                             ORDER BY CAST(ts AS REAL) DESC

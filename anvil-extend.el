@@ -4,7 +4,6 @@
 
 ;; Author: zawatton
 ;; Keywords: comm, tools, ai, mcp, codegen
-;; Package-Requires: ((emacs "28.2"))
 
 ;; This file is NOT part of GNU Emacs.
 

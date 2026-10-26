@@ -3,8 +3,7 @@
 ;; Copyright (C) 2026 Anvil contributors
 
 ;; Author: Anvil contributors
-;; Keywords: crypto, hmac, security, web
-;; Package-Requires: ((emacs "28.1"))
+;; Keywords: crypto, hmac, security, web, tools
 ;; Version: 0.1.0
 
 ;;; Commentary:

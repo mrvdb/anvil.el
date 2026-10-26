@@ -5,7 +5,6 @@
 ;; Author: Laurynas Biveinis <laurynas.biveinis@gmail.com>
 ;; Keywords: convenience, files, matching, outlines
 ;; Version: 0.9.0
-;; Package-Requires: ((emacs "27.1"))
 ;; URL: https://github.com/zawatton/anvil.el
 
 ;; This file is NOT part of GNU Emacs.

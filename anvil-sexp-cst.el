@@ -28,6 +28,19 @@
 
 ;;; Code:
 
+;; Builtin-only implementations live behind the optional Emacs 29 boundary.
+(autoload 'anvil-builtin-treesit-node-at "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-check "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-child "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-child-count "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-end "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-parent "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-start "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-text "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-type "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-parser-create "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-parser-root-node "anvil-builtin-backend")
+
 (require 'cl-lib)
 (require 'json)
 (require 'anvil-server)
@@ -758,9 +771,9 @@ may land on an anonymous token (paren, whitespace) so the upward
 walk is required to surface a structurally meaningful node."
   (if (null position)
       root
-    (let ((node (ignore-errors (treesit-node-at position parser))))
-      (while (and node (not (treesit-node-check node 'named)))
-        (setq node (treesit-node-parent node)))
+    (let ((node (ignore-errors (anvil-builtin-treesit-node-at position parser))))
+      (while (and node (not (anvil-builtin-treesit-node-check node 'named)))
+        (setq node (anvil-builtin-treesit-node-parent node)))
       (or node root))))
 
 (defun anvil-sexp-cst--node-to-plist (node depth max-depth)
@@ -770,24 +783,24 @@ DEPTH reaches MAX-DEPTH the node emits its raw source text and an
 empty children array with `:truncated' = t when it had children
 that got pruned.  Leaf nodes (zero children) emit text regardless
 of depth."
-  (let* ((type (treesit-node-type node))
-         (start (treesit-node-start node))
-         (end (treesit-node-end node))
-         (named (and (treesit-node-check node 'named) t))
-         (child-count (treesit-node-child-count node))
+  (let* ((type (anvil-builtin-treesit-node-type node))
+         (start (anvil-builtin-treesit-node-start node))
+         (end (anvil-builtin-treesit-node-end node))
+         (named (and (anvil-builtin-treesit-node-check node 'named) t))
+         (child-count (anvil-builtin-treesit-node-child-count node))
          (at-cap (>= depth max-depth)))
     (cond
      ((or (zerop child-count) at-cap)
       (list :type type :start start :end end
             :named (if named t :false)
-            :text (treesit-node-text node t)
+            :text (anvil-builtin-treesit-node-text node t)
             :children (vector)
             :truncated (if (and at-cap (> child-count 0)) t :false)))
      (t
       (let (kids)
         (dotimes (i child-count)
           (push (anvil-sexp-cst--node-to-plist
-                 (treesit-node-child node i)
+                 (anvil-builtin-treesit-node-child node i)
                  (1+ depth) max-depth)
                 kids))
         (list :type type :start start :end end
@@ -840,8 +853,8 @@ MCP Parameters:
                         max-depth anvil-sexp-cst-read-max-depth)))
        (with-temp-buffer
          (insert-file-contents file)
-         (let* ((parser (treesit-parser-create 'elisp))
-                (root (treesit-parser-root-node parser))
+         (let* ((parser (anvil-builtin-treesit-parser-create 'elisp))
+                (root (anvil-builtin-treesit-parser-root-node parser))
                 (node (anvil-sexp-cst--pick-node parser root pos))
                 (plist (anvil-sexp-cst--node-to-plist node 0 depth-cap)))
            (json-serialize plist :false-object :false :null-object :null))))))))
@@ -858,20 +871,20 @@ verify a proposed replacement keeps the whole file structurally
 valid."
   (with-temp-buffer
     (insert content)
-    (let* ((parser (treesit-parser-create 'elisp))
-           (root (treesit-parser-root-node parser)))
+    (let* ((parser (anvil-builtin-treesit-parser-create 'elisp))
+           (root (anvil-builtin-treesit-parser-root-node parser)))
       (cond
-       ((treesit-node-check root 'has-error)
+       ((anvil-builtin-treesit-node-check root 'has-error)
         (cons 'error
               "Re-parsed file contains tree-sitter ERROR nodes; replacement rejected."))
        (t
         (let* ((new-pos (1+ start-0based))
                (node (anvil-sexp-cst--pick-node parser root new-pos)))
           (cons 'ok
-                (list :type (treesit-node-type node)
-                      :start (treesit-node-start node)
-                      :end (treesit-node-end node)
-                      :text (treesit-node-text node t)))))))))
+                (list :type (anvil-builtin-treesit-node-type node)
+                      :start (anvil-builtin-treesit-node-start node)
+                      :end (anvil-builtin-treesit-node-end node)
+                      :text (anvil-builtin-treesit-node-text node t)))))))))
 
 (defun anvil-sexp-cst--edit-compute (file pos new-text)
   "Internal: read FILE, splice NEW-TEXT over the node at POS, verify.
@@ -883,8 +896,8 @@ parse-error-in-replacement).  Factored out so both the dry-run
 can share the validation path without re-implementing it."
   (with-temp-buffer
     (insert-file-contents file)
-    (let* ((parser (treesit-parser-create 'elisp))
-           (root (treesit-parser-root-node parser))
+    (let* ((parser (anvil-builtin-treesit-parser-create 'elisp))
+           (root (anvil-builtin-treesit-parser-root-node parser))
            (node (anvil-sexp-cst--pick-node parser root pos))
            (before-text (buffer-string))
            (before-bytes (string-bytes before-text)))
@@ -894,9 +907,9 @@ can share the validation path without re-implementing it."
               :kind "sexp-cst/no-node-at-position"
               :message (format "No named node at position %d" pos)))
        (t
-        (let* ((old-start (treesit-node-start node))
-               (old-end (treesit-node-end node))
-               (old-text (treesit-node-text node t))
+        (let* ((old-start (anvil-builtin-treesit-node-start node))
+               (old-end (anvil-builtin-treesit-node-end node))
+               (old-text (anvil-builtin-treesit-node-text node t))
                (new-content
                 (concat (substring before-text 0 (1- old-start))
                         new-text
@@ -908,7 +921,7 @@ can share the validation path without re-implementing it."
                     :kind "sexp-cst/parse-error-in-replacement"
                     :message (cdr reparse))
             (let* ((after-plist (cdr reparse))
-                   (before-plist (list :type (treesit-node-type node)
+                   (before-plist (list :type (anvil-builtin-treesit-node-type node)
                                        :start old-start
                                        :end old-end
                                        :text old-text))
@@ -1145,9 +1158,9 @@ shape of input the repair tool has to accept."
   "Return non-nil when tree-sitter-elisp finds ERROR nodes in CONTENT."
   (with-temp-buffer
     (insert content)
-    (let* ((parser (treesit-parser-create 'elisp))
-           (root (treesit-parser-root-node parser)))
-      (treesit-node-check root 'has-error))))
+    (let* ((parser (anvil-builtin-treesit-parser-create 'elisp))
+           (root (anvil-builtin-treesit-parser-root-node parser)))
+      (anvil-builtin-treesit-node-check root 'has-error))))
 
 (defun anvil-sexp-cst--classify-fix-kind (in-string paren-direction)
   "Pick the fix.kind label for an attempted repair.

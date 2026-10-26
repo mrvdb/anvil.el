@@ -26,6 +26,19 @@
 
 ;;; Code:
 
+;; Builtin-only implementations live behind the optional Emacs 29 boundary.
+(autoload 'anvil-builtin-treesit-node-child "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-child-by-field-name "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-children "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-end "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-next-sibling "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-on "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-parent "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-start "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-text "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-type "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-query-capture "anvil-builtin-backend")
+
 (require 'cl-lib)
 (require 'json)
 (require 'subr-x)
@@ -87,7 +100,7 @@ Emacs `treesit-query-capture' returns a flat list of (NAME . NODE)
 pairs.  This walks the flat list and groups consecutive captures
 into per-match alists, which is what the locator body wants for
 \"this @fn was named @name\" correlations."
-  (let ((all (treesit-query-capture root query))
+  (let ((all (anvil-builtin-treesit-query-capture root query))
         groups current seen-names)
     (dolist (cap all)
       (let ((name (car cap)))
@@ -107,9 +120,9 @@ Each entry: (:kind import|from :text STR :bounds PLIST)."
   (anvil-treesit-with-root file anvil-py--lang root
     (let ((q (anvil-py--query 'imports))
           results)
-      (dolist (cap (treesit-query-capture root q))
+      (dolist (cap (anvil-builtin-treesit-query-capture root q))
         (let* ((node (cdr cap))
-               (kind (pcase (treesit-node-type node)
+               (kind (pcase (anvil-builtin-treesit-node-type node)
                        ("import_statement" 'import)
                        ("import_from_statement" 'from)
                        ("future_import_statement" 'future)
@@ -125,21 +138,21 @@ Each entry: (:kind import|from :text STR :bounds PLIST)."
 The python grammar marks async defs either via an `async' field or
 via an anonymous `async' keyword child node depending on grammar
 version — check both."
-  (or (treesit-node-child-by-field-name function-def-node "async")
-      (let ((c0 (treesit-node-child function-def-node 0)))
-        (and c0 (string= (treesit-node-text c0 t) "async")))))
+  (or (anvil-builtin-treesit-node-child-by-field-name function-def-node "async")
+      (let ((c0 (anvil-builtin-treesit-node-child function-def-node 0)))
+        (and c0 (string= (anvil-builtin-treesit-node-text c0 t) "async")))))
 
 (defun anvil-py--outer-node (inner)
   "Return INNER's `decorated_definition' parent, or INNER itself."
-  (let ((p (treesit-node-parent inner)))
-    (if (and p (string= (treesit-node-type p) "decorated_definition"))
+  (let ((p (anvil-builtin-treesit-node-parent inner)))
+    (if (and p (string= (anvil-builtin-treesit-node-type p) "decorated_definition"))
         p
       inner)))
 
 (defun anvil-py--node-name (def-node)
   "Return the name text of a function_definition / class_definition node.
 Reads the `name' field directly, returning empty string if missing."
-  (let ((n (treesit-node-child-by-field-name def-node "name")))
+  (let ((n (anvil-builtin-treesit-node-child-by-field-name def-node "name")))
     (if n (anvil-treesit-node-text n) "")))
 
 (defun anvil-py--enclosing-class-name (fn-node)
@@ -149,10 +162,10 @@ as needed.  Returns nil if FN-NODE is not a direct method of any
 class (e.g. a module-level function, or a nested def inside another
 function)."
   (let* ((outer (anvil-py--outer-node fn-node))
-         (parent (treesit-node-parent outer)))
-    (when (and parent (string= (treesit-node-type parent) "block"))
-      (let ((grand (treesit-node-parent parent)))
-        (when (and grand (string= (treesit-node-type grand) "class_definition"))
+         (parent (anvil-builtin-treesit-node-parent outer)))
+    (when (and parent (string= (anvil-builtin-treesit-node-type parent) "block"))
+      (let ((grand (anvil-builtin-treesit-node-parent parent)))
+        (when (and grand (string= (anvil-builtin-treesit-node-type grand) "class_definition"))
           (anvil-py--node-name grand))))))
 
 (defun anvil-py--collect-named (root op kind-sym)
@@ -171,7 +184,7 @@ crosses one level of block).  This lets callers of
 methods from top-level defs without a second walk."
   (let ((q (anvil-py--query op))
         results)
-    (dolist (cap (treesit-query-capture root q))
+    (dolist (cap (anvil-builtin-treesit-query-capture root q))
       (let* ((inner (cdr cap))
              (outer (anvil-py--outer-node inner))
              (decorated (not (eq outer inner)))
@@ -214,7 +227,7 @@ Decorator lines above a method are included in :bounds via the
   (anvil-treesit-with-root file anvil-py--lang root
     (let ((q (anvil-py--query 'methods))
           results)
-      (dolist (cap (treesit-query-capture root q))
+      (dolist (cap (anvil-builtin-treesit-query-capture root q))
         (when (eq (car cap) 'fn)
           (let* ((inner (cdr cap))
                  (cls (anvil-py--enclosing-class-name inner)))
@@ -234,17 +247,17 @@ Decorator lines above a method are included in :bounds via the
 (defun anvil-py--decorated-target (whole-node)
   "Return (:name :kind :bounds) describing WHOLE-NODE's decorated target.
 WHOLE-NODE is a `decorated_definition' capture."
-  (let* ((def (treesit-node-child-by-field-name whole-node "definition"))
+  (let* ((def (anvil-builtin-treesit-node-child-by-field-name whole-node "definition"))
          ;; Fallback: grammar versions that don't expose the field —
          ;; find the first non-decorator child.
          (def (or def
                   (let (found)
-                    (dolist (c (treesit-node-children whole-node t))
+                    (dolist (c (anvil-builtin-treesit-node-children whole-node t))
                       (unless (or found
-                                  (string= (treesit-node-type c) "decorator"))
+                                  (string= (anvil-builtin-treesit-node-type c) "decorator"))
                         (setq found c)))
                     found)))
-         (kind (pcase (and def (treesit-node-type def))
+         (kind (pcase (and def (anvil-builtin-treesit-node-type def))
                  ("function_definition" 'function)
                  ("class_definition" 'class)
                  (_ 'other))))
@@ -262,7 +275,7 @@ all pointing at the same target."
     (let ((q (anvil-py--query 'decorators))
           ;; Collect one decorated_definition node per @whole capture.
           wholes)
-      (dolist (cap (treesit-query-capture root q))
+      (dolist (cap (anvil-builtin-treesit-query-capture root q))
         (when (eq (car cap) 'whole)
           (cl-pushnew (cdr cap) wholes :test #'equal)))
       (let (results)
@@ -272,8 +285,8 @@ all pointing at the same target."
                  ;; Each decorator child of `whole' gets its own entry.
                  (decos (cl-remove-if-not
                          (lambda (c)
-                           (string= (treesit-node-type c) "decorator"))
-                         (treesit-node-children whole t))))
+                           (string= (anvil-builtin-treesit-node-type c) "decorator"))
+                         (anvil-builtin-treesit-node-children whole t))))
             (dolist (d decos)
               (push (list :decorator (anvil-treesit-node-text d)
                           :target (plist-get target :name)
@@ -333,23 +346,23 @@ of the first non-docstring / non-future-import statement if no
 regular imports are present."
   (let ((last-import-end nil)
         (first-non-import-start nil)
-        (c (treesit-node-child root 0)))
+        (c (anvil-builtin-treesit-node-child root 0)))
     (while c
-      (let ((type (treesit-node-type c)))
+      (let ((type (anvil-builtin-treesit-node-type c)))
         (pcase type
           ((or "import_statement" "import_from_statement" "future_import_statement")
-           (setq last-import-end (treesit-node-end c)))
+           (setq last-import-end (anvil-builtin-treesit-node-end c)))
           ("expression_statement"
            ;; Module docstring is an expression_statement with a string
            ;; child — skip it if it's the very first node.
            (unless (or last-import-end first-non-import-start)
-             (let ((inner (treesit-node-child c 0)))
+             (let ((inner (anvil-builtin-treesit-node-child c 0)))
                (unless (and inner
-                            (string= (treesit-node-type inner) "string"))
-                 (setq first-non-import-start (treesit-node-start c))))))
+                            (string= (anvil-builtin-treesit-node-type inner) "string"))
+                 (setq first-non-import-start (anvil-builtin-treesit-node-start c))))))
           (_ (unless first-non-import-start
-               (setq first-non-import-start (treesit-node-start c))))))
-      (setq c (treesit-node-next-sibling c)))
+               (setq first-non-import-start (anvil-builtin-treesit-node-start c))))))
+      (setq c (anvil-builtin-treesit-node-next-sibling c)))
     (or last-import-end
         first-non-import-start
         ;; Empty file.
@@ -362,30 +375,30 @@ child — aliases such as \"Workbook as W\" are preserved intact.  The
 module's own `dotted_name' (reached via the `module_name' field) is
 filtered out by start-position comparison, which works even when the
 tree-sitter node wrapper produces a fresh object per field lookup."
-  (let* ((mod-node (treesit-node-child-by-field-name node "module_name"))
-         (mod-start (and mod-node (treesit-node-start mod-node)))
+  (let* ((mod-node (anvil-builtin-treesit-node-child-by-field-name node "module_name"))
+         (mod-start (and mod-node (anvil-builtin-treesit-node-start mod-node)))
          names)
-    (dolist (c (treesit-node-children node t))
-      (let ((type (treesit-node-type c)))
+    (dolist (c (anvil-builtin-treesit-node-children node t))
+      (let ((type (anvil-builtin-treesit-node-type c)))
         (when (and (member type '("dotted_name" "aliased_import"))
                    (not (and mod-start
-                             (= (treesit-node-start c) mod-start))))
+                             (= (anvil-builtin-treesit-node-start c) mod-start))))
           (push (anvil-treesit-node-text c) names))))
     (nreverse names)))
 
 (defun anvil-py--from-import-module (node)
   "Return the module name of a `from X import ...' NODE as a string."
-  (let ((m (treesit-node-child-by-field-name node "module_name")))
+  (let ((m (anvil-builtin-treesit-node-child-by-field-name node "module_name")))
     (and m (anvil-treesit-node-text m))))
 
 (defun anvil-py--find-from-import (root module)
   "Return the first `from MODULE import ...' node in ROOT, or nil."
   (let ((q (anvil-py--query 'imports))
         found)
-    (dolist (cap (treesit-query-capture root q))
+    (dolist (cap (anvil-builtin-treesit-query-capture root q))
       (unless found
         (let ((n (cdr cap)))
-          (when (and (string= (treesit-node-type n) "import_from_statement")
+          (when (and (string= (anvil-builtin-treesit-node-type n) "import_from_statement")
                      (string= (anvil-py--from-import-module n) module))
             (setq found n)))))
     found))
@@ -394,12 +407,12 @@ tree-sitter node wrapper produces a fresh object per field lookup."
   "Return the first `import MODULE[ as ALIAS]' node in ROOT, or nil."
   (let ((q (anvil-py--query 'imports))
         found)
-    (dolist (cap (treesit-query-capture root q))
+    (dolist (cap (anvil-builtin-treesit-query-capture root q))
       (unless found
         (let ((n (cdr cap)))
-          (when (string= (treesit-node-type n) "import_statement")
-            (dolist (c (treesit-node-children n t))
-              (let ((type (treesit-node-type c)))
+          (when (string= (anvil-builtin-treesit-node-type n) "import_statement")
+            (dolist (c (anvil-builtin-treesit-node-children n t))
+              (let ((type (anvil-builtin-treesit-node-type c)))
                 (cond
                  ((and (null alias)
                        (string= type "dotted_name")
@@ -407,9 +420,9 @@ tree-sitter node wrapper produces a fresh object per field lookup."
                   (setq found n))
                  ((and alias
                        (string= type "aliased_import"))
-                  (let* ((name-node (treesit-node-child-by-field-name
+                  (let* ((name-node (anvil-builtin-treesit-node-child-by-field-name
                                      c "name"))
-                         (alias-node (treesit-node-child-by-field-name
+                         (alias-node (anvil-builtin-treesit-node-child-by-field-name
                                       c "alias")))
                     (when (and name-node alias-node
                                (string= (anvil-treesit-node-text name-node)
@@ -482,8 +495,8 @@ from-import name already present), returns a no-op plan."
                    (let* ((merged (append current missing))
                           (new-text (anvil-py--render-from-import
                                      module merged))
-                          (beg (treesit-node-start existing))
-                          (end (treesit-node-end existing)))
+                          (beg (anvil-builtin-treesit-node-start existing))
+                          (end (anvil-builtin-treesit-node-end existing)))
                      (anvil-treesit-make-plan
                       file beg end new-text
                       (format "add-import from %s (merge %d name%s)"
@@ -540,8 +553,8 @@ specified) matches.  No-op when the import is already absent."
                              (member (car (split-string n " as "))
                                      wanted))
                            current))
-                    (beg (treesit-node-start existing))
-                    (end (treesit-node-end existing)))
+                    (beg (anvil-builtin-treesit-node-start existing))
+                    (end (anvil-builtin-treesit-node-end existing)))
                (cond
                 ((equal current kept)
                  (anvil-treesit-make-noop-plan
@@ -574,8 +587,8 @@ specified) matches.  No-op when the import is already absent."
            (if (null existing)
                (anvil-treesit-make-noop-plan
                 file (format "remove-import import %s" module))
-             (let* ((beg (treesit-node-start existing))
-                    (end (treesit-node-end existing))
+             (let* ((beg (anvil-builtin-treesit-node-start existing))
+                    (end (anvil-builtin-treesit-node-end existing))
                     (end+1 (with-temp-buffer
                              (insert-file-contents file)
                              (goto-char end)
@@ -619,13 +632,13 @@ Returns WRAPPER unchanged when valid."
 Walks from the smallest covering node outward until the bounds match;
 if no node has that exact range we return nil so the caller can
 surface a precise error rather than accepting a misaligned wrap."
-  (let ((n (treesit-node-on start end 'python)))
+  (let ((n (anvil-builtin-treesit-node-on start end 'python)))
     (catch 'found
       (while n
-        (when (and (= (treesit-node-start n) start)
-                   (= (treesit-node-end n) end))
+        (when (and (= (anvil-builtin-treesit-node-start n) start)
+                   (= (anvil-builtin-treesit-node-end n) end))
           (throw 'found n))
-        (setq n (treesit-node-parent n)))
+        (setq n (anvil-builtin-treesit-node-parent n)))
       nil)))
 
 ;;;; --- rename-import helpers (Phase 2c) -----------------------------------
@@ -648,17 +661,17 @@ Matches on the module dotted_name regardless of whether it currently
 carries an alias."
   (let ((q (anvil-py--query 'imports))
         found)
-    (dolist (cap (treesit-query-capture root q))
+    (dolist (cap (anvil-builtin-treesit-query-capture root q))
       (unless found
         (let ((n (cdr cap)))
-          (when (string= (treesit-node-type n) "import_statement")
-            (dolist (c (treesit-node-children n t))
-              (pcase (treesit-node-type c)
+          (when (string= (anvil-builtin-treesit-node-type n) "import_statement")
+            (dolist (c (anvil-builtin-treesit-node-children n t))
+              (pcase (anvil-builtin-treesit-node-type c)
                 ("dotted_name"
                  (when (string= (anvil-treesit-node-text c) module)
                    (setq found n)))
                 ("aliased_import"
-                 (let ((nm (treesit-node-child-by-field-name c "name")))
+                 (let ((nm (anvil-builtin-treesit-node-child-by-field-name c "name")))
                    (when (and nm (string= (anvil-treesit-node-text nm)
                                           module))
                      (setq found n))))))))))
@@ -729,7 +742,7 @@ match exists or when the result is ambiguous without a class
 filter.  CLASS-FILTER may be nil (no filter) or a string."
   (let ((q (anvil-py--query 'functions))
         candidates)
-    (dolist (cap (treesit-query-capture root q))
+    (dolist (cap (anvil-builtin-treesit-query-capture root q))
       (let* ((inner (cdr cap))
              (nm (anvil-py--node-name inner)))
         (when (string= nm name)
@@ -804,7 +817,7 @@ replacement matches the current text."
                          original wrapper t t))
            (reason (format "wrap-expr [%d,%d)%s" start end
                            (if node
-                               (format " (%s)" (treesit-node-type node))
+                               (format " (%s)" (anvil-builtin-treesit-node-type node))
                              " (unaligned!)"))))
       (unless node
         (user-error "anvil-py-wrap-expr: range %d-%d does not align with \
@@ -835,8 +848,8 @@ when the new alias already matches the current one."
               module (file-name-nondirectory file)))
            (let* ((current-text (anvil-treesit-node-text node))
                   (new-text (anvil-py--render-import module new-alias))
-                  (beg (treesit-node-start node))
-                  (end (treesit-node-end node)))
+                  (beg (anvil-builtin-treesit-node-start node))
+                  (end (anvil-builtin-treesit-node-end node)))
              (if (string= current-text new-text)
                  (anvil-treesit-make-noop-plan
                   file (format "rename-import import %s" module))
@@ -879,8 +892,8 @@ when the new alias already matches the current one."
                         (_ (setf (nth target-idx new-entries) new-entry))
                         (new-text (anvil-py--render-from-import
                                    from-mod new-entries))
-                        (beg (treesit-node-start node))
-                        (end (treesit-node-end node)))
+                        (beg (anvil-builtin-treesit-node-start node))
+                        (end (anvil-builtin-treesit-node-end node)))
                    (anvil-treesit-make-plan
                     file beg end new-text
                     (format "rename-import from %s: %s → %s"
@@ -896,8 +909,8 @@ Replaces [line-beginning-position(fn-start), fn-end) so the existing
 leading indent is included in the old range and reindented uniformly."
   (anvil-treesit-with-root file anvil-py--lang root
     (let* ((fn (anvil-py--find-replace-target root name class-filter))
-           (fn-start (treesit-node-start fn))
-           (fn-end (treesit-node-end fn))
+           (fn-start (anvil-builtin-treesit-node-start fn))
+           (fn-end (anvil-builtin-treesit-node-end fn))
            (line-beg (anvil-py--line-beginning-at fn-start))
            (indent (make-string (- fn-start line-beg) ?\s))
            (dedented (anvil-py--dedent new-source))

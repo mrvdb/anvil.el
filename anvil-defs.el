@@ -38,6 +38,21 @@
 
 ;;; Code:
 
+;; Builtin-only implementations live behind the optional Emacs 29 boundary.
+(autoload 'anvil-builtin-sqlite-available-p "anvil-builtin-backend")
+(autoload 'anvil-builtin-sqlite-close "anvil-builtin-backend")
+(autoload 'anvil-builtin-sqlite-execute "anvil-builtin-backend")
+(autoload 'anvil-builtin-sqlite-open "anvil-builtin-backend")
+(autoload 'anvil-builtin-sqlite-select "anvil-builtin-backend")
+(autoload 'anvil-builtin-sqlitep "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-child-by-field-name "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-end "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-parent "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-start "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-text "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-type "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-query-capture "anvil-builtin-backend")
+
 (require 'cl-lib)
 (require 'subr-x)
 (require 'anvil-server)
@@ -168,7 +183,7 @@ does not drown the graph in plumbing.  The `refs' table is untouched —
 (defun anvil-defs--detect-backend ()
   "Return the best available SQLite backend or signal a `user-error'."
   (cond
-   ((and (fboundp 'sqlite-available-p) (sqlite-available-p)) 'builtin)
+   ((and (fboundp 'sqlite-available-p) (anvil-builtin-sqlite-available-p)) 'builtin)
    ((require 'emacsql nil t) 'emacsql)
    (t
     (user-error
@@ -177,25 +192,25 @@ does not drown the graph in plumbing.  The `refs' table is untouched —
 (defun anvil-defs--open (path)
   "Open SQLite database at PATH using the active backend."
   (pcase anvil-defs--backend
-    ('builtin (sqlite-open path))
+    ('builtin (anvil-builtin-sqlite-open path))
     ('emacsql (user-error "anvil-defs: emacsql backend not implemented"))))
 
 (defun anvil-defs--close (db)
   "Close DB if live."
   (pcase anvil-defs--backend
-    ('builtin (when (sqlitep db) (sqlite-close db)))
+    ('builtin (when (anvil-builtin-sqlitep db) (anvil-builtin-sqlite-close db)))
     ('emacsql nil)))
 
 (defun anvil-defs--execute (db sql &optional params)
   "Execute SQL (DDL / INSERT / UPDATE / DELETE) on DB with PARAMS."
   (pcase anvil-defs--backend
-    ('builtin (sqlite-execute db sql params))
+    ('builtin (anvil-builtin-sqlite-execute db sql params))
     ('emacsql (user-error "anvil-defs: emacsql backend not implemented"))))
 
 (defun anvil-defs--select (db sql &optional params)
   "Run SELECT SQL on DB with PARAMS and return a list of rows."
   (pcase anvil-defs--backend
-    ('builtin (sqlite-select db sql params))
+    ('builtin (anvil-builtin-sqlite-select db sql params))
     ('emacsql (user-error "anvil-defs: emacsql backend not implemented"))))
 
 (defmacro anvil-defs--with-transaction (db &rest body)
@@ -609,24 +624,24 @@ line.  The walker records:
 
 (defun anvil-defs--ts-node-name (node)
   "Return the `name' field text of tree-sitter NODE, or nil."
-  (let ((n (treesit-node-child-by-field-name node "name")))
-    (and n (treesit-node-text n t))))
+  (let ((n (anvil-builtin-treesit-node-child-by-field-name node "name")))
+    (and n (anvil-builtin-treesit-node-text n t))))
 
 (defun anvil-defs--py-enclosing-class (node)
   "Return the class name directly enclosing NODE (one block level), or nil."
-  (let ((parent (treesit-node-parent node)))
-    (when (and parent (string= (treesit-node-type parent) "block"))
-      (let ((grand (treesit-node-parent parent)))
-        (when (and grand (string= (treesit-node-type grand) "class_definition"))
+  (let ((parent (anvil-builtin-treesit-node-parent node)))
+    (when (and parent (string= (anvil-builtin-treesit-node-type parent) "block"))
+      (let ((grand (anvil-builtin-treesit-node-parent parent)))
+        (when (and grand (string= (anvil-builtin-treesit-node-type grand) "class_definition"))
           (anvil-defs--ts-node-name grand))))))
 
 (defun anvil-defs--py-enclosing-defun (node)
   "Return the name of the nearest function_definition ancestor of NODE, or nil."
-  (let ((p (treesit-node-parent node)) (res nil))
+  (let ((p (anvil-builtin-treesit-node-parent node)) (res nil))
     (while (and p (not res))
-      (when (string= (treesit-node-type p) "function_definition")
+      (when (string= (anvil-builtin-treesit-node-type p) "function_definition")
         (setq res (anvil-defs--ts-node-name p)))
-      (setq p (treesit-node-parent p)))
+      (setq p (anvil-builtin-treesit-node-parent p)))
     res))
 
 (defun anvil-defs--py-callee (call-node)
@@ -634,13 +649,13 @@ line.  The walker records:
 A bare `f()' yields \"f\"; an attribute call `x.m()' yields the method
 name \"m\".  Resolution is syntactic — a same-named method on a
 different class produces a false edge (the Phase 3 textual caveat)."
-  (let ((fnode (treesit-node-child-by-field-name call-node "function")))
+  (let ((fnode (anvil-builtin-treesit-node-child-by-field-name call-node "function")))
     (when fnode
-      (pcase (treesit-node-type fnode)
-        ("identifier" (treesit-node-text fnode t))
+      (pcase (anvil-builtin-treesit-node-type fnode)
+        ("identifier" (anvil-builtin-treesit-node-text fnode t))
         ("attribute"
-         (let ((a (treesit-node-child-by-field-name fnode "attribute")))
-           (and a (treesit-node-text a t))))
+         (let ((a (anvil-builtin-treesit-node-child-by-field-name fnode "attribute")))
+           (and a (anvil-builtin-treesit-node-text a t))))
         (_ nil)))))
 
 (defun anvil-defs--scan-python-file (path)
@@ -668,41 +683,41 @@ import / from-import module names become `requires' features, so
                     (import_statement name: (aliased_import name: (dotted_name) @m))
                     (import_from_statement module_name: (dotted_name) @m)
                     (import_from_statement module_name: (relative_import) @m)]")))
-       (dolist (cap (treesit-query-capture root fnq))
+       (dolist (cap (anvil-builtin-treesit-query-capture root fnq))
          (let* ((node (cdr cap))
                 (name (anvil-defs--ts-node-name node)))
            (when (and name (not (string-empty-p name)))
              (push (list :kind (if (anvil-defs--py-enclosing-class node)
                                    "method" "function")
                          :name name
-                         :line (line-number-at-pos (treesit-node-start node))
-                         :end-line (line-number-at-pos (treesit-node-end node))
+                         :line (line-number-at-pos (anvil-builtin-treesit-node-start node))
+                         :end-line (line-number-at-pos (anvil-builtin-treesit-node-end node))
                          :arity-min nil :arity-max nil
                          :docstring-head nil :obsolete-p 0)
                    defs))))
-       (dolist (cap (treesit-query-capture root clq))
+       (dolist (cap (anvil-builtin-treesit-query-capture root clq))
          (let* ((node (cdr cap))
                 (name (anvil-defs--ts-node-name node)))
            (when (and name (not (string-empty-p name)))
              (push (list :kind "class" :name name
-                         :line (line-number-at-pos (treesit-node-start node))
-                         :end-line (line-number-at-pos (treesit-node-end node))
+                         :line (line-number-at-pos (anvil-builtin-treesit-node-start node))
+                         :end-line (line-number-at-pos (anvil-builtin-treesit-node-end node))
                          :arity-min nil :arity-max nil
                          :docstring-head nil :obsolete-p 0)
                    defs))))
-       (dolist (cap (treesit-query-capture root caq))
+       (dolist (cap (anvil-builtin-treesit-query-capture root caq))
          (let* ((node (cdr cap))
                 (callee (anvil-defs--py-callee node)))
            (when (and callee (not (string-empty-p callee)))
              (push (list :name callee
-                         :line (line-number-at-pos (treesit-node-start node))
+                         :line (line-number-at-pos (anvil-builtin-treesit-node-start node))
                          :context (anvil-defs--py-enclosing-defun node)
                          :kind "call")
                    refs))))
        ;; imports -> features (kind "requires"), so `defs-who-requires'
        ;; answers "who imports module M" for Python too.
-       (dolist (cap (treesit-query-capture root impq))
-         (let ((m (treesit-node-text (cdr cap) t)))
+       (dolist (cap (anvil-builtin-treesit-query-capture root impq))
+         (let ((m (anvil-builtin-treesit-node-text (cdr cap) t)))
            (when (and m (not (string-empty-p m)))
              (push (list :feature m :kind "requires") features))))
        (list :defs (nreverse defs) :refs (nreverse refs)
@@ -712,10 +727,10 @@ import / from-import module names become `requires' features, so
 
 (defun anvil-defs--ts-enclosing-class (node)
   "Return the class name whose body directly contains NODE, or nil."
-  (let ((body (treesit-node-parent node)))
-    (when (and body (string= (treesit-node-type body) "class_body"))
-      (let ((cls (treesit-node-parent body)))
-        (when (and cls (string= (treesit-node-type cls) "class_declaration"))
+  (let ((body (anvil-builtin-treesit-node-parent node)))
+    (when (and body (string= (anvil-builtin-treesit-node-type body) "class_body"))
+      (let ((cls (anvil-builtin-treesit-node-parent body)))
+        (when (and cls (string= (anvil-builtin-treesit-node-type cls) "class_declaration"))
           (anvil-defs--ts-node-name cls))))))
 
 (defun anvil-defs--ts-enclosing-defun (node)
@@ -723,38 +738,38 @@ import / from-import module names become `requires' features, so
 Climbs through anonymous arrow / function expressions, picking up the
 name from an enclosing `variable_declarator' (=const f = () =>=) or
 object `pair' (={ f() {} }=) when the function node itself is unnamed."
-  (let ((p (treesit-node-parent node)) (res nil))
+  (let ((p (anvil-builtin-treesit-node-parent node)) (res nil))
     (while (and p (not res))
-      (let ((ty (treesit-node-type p)))
+      (let ((ty (anvil-builtin-treesit-node-type p)))
         (cond
          ((member ty '("function_declaration" "generator_function_declaration"
                        "method_definition"))
           (let ((nm (anvil-defs--ts-node-name p)))
             (when (and nm (not (string-empty-p nm))) (setq res nm))))
          ((member ty '("arrow_function" "function_expression"))
-          (let ((gp (treesit-node-parent p)))
+          (let ((gp (anvil-builtin-treesit-node-parent p)))
             (when gp
-              (pcase (treesit-node-type gp)
+              (pcase (anvil-builtin-treesit-node-type gp)
                 ("variable_declarator"
-                 (let ((nm (treesit-node-child-by-field-name gp "name")))
-                   (when nm (setq res (treesit-node-text nm t)))))
+                 (let ((nm (anvil-builtin-treesit-node-child-by-field-name gp "name")))
+                   (when nm (setq res (anvil-builtin-treesit-node-text nm t)))))
                 ("pair"
-                 (let ((k (treesit-node-child-by-field-name gp "key")))
-                   (when k (setq res (treesit-node-text k t)))))))))))
-      (setq p (treesit-node-parent p)))
+                 (let ((k (anvil-builtin-treesit-node-child-by-field-name gp "key")))
+                   (when k (setq res (anvil-builtin-treesit-node-text k t)))))))))))
+      (setq p (anvil-builtin-treesit-node-parent p)))
     res))
 
 (defun anvil-defs--ts-callee (call-node)
   "Return the callee symbol name of a JS/TS CALL-NODE, or nil.
 A bare `f()' yields \"f\"; a member call `a.b()' yields \"b\" (the
 property).  Syntactic only — same-named methods collide (Phase 3 caveat)."
-  (let ((fnode (treesit-node-child-by-field-name call-node "function")))
+  (let ((fnode (anvil-builtin-treesit-node-child-by-field-name call-node "function")))
     (when fnode
-      (pcase (treesit-node-type fnode)
-        ("identifier" (treesit-node-text fnode t))
+      (pcase (anvil-builtin-treesit-node-type fnode)
+        ("identifier" (anvil-builtin-treesit-node-text fnode t))
         ("member_expression"
-         (let ((p (treesit-node-child-by-field-name fnode "property")))
-           (and p (treesit-node-text p t))))
+         (let ((p (anvil-builtin-treesit-node-child-by-field-name fnode "property")))
+           (and p (anvil-builtin-treesit-node-text p t))))
         (_ nil)))))
 
 (defun anvil-defs--scan-ts-file (path)
@@ -792,42 +807,42 @@ inference); import specifiers become `requires' features (so
                      (when (and name (not (string-empty-p name)))
                        (push (list :kind kind :name name
                                    :line (line-number-at-pos
-                                          (treesit-node-start node))
+                                          (anvil-builtin-treesit-node-start node))
                                    :end-line (line-number-at-pos
-                                              (treesit-node-end node))
+                                              (anvil-builtin-treesit-node-end node))
                                    :arity-min nil :arity-max nil
                                    :docstring-head nil :obsolete-p 0)
                              defs))))
-           (dolist (cap (treesit-query-capture root fnq))
+           (dolist (cap (anvil-builtin-treesit-query-capture root fnq))
              (emit-def (cdr cap) "function" (anvil-defs--ts-node-name (cdr cap))))
-           (dolist (cap (treesit-query-capture root clq))
+           (dolist (cap (anvil-builtin-treesit-query-capture root clq))
              (emit-def (cdr cap) "class" (anvil-defs--ts-node-name (cdr cap))))
-           (dolist (cap (treesit-query-capture root mq))
+           (dolist (cap (anvil-builtin-treesit-query-capture root mq))
              (emit-def (cdr cap) "method" (anvil-defs--ts-node-name (cdr cap))))
            ;; named arrow / function-expression bindings: per-declarator,
            ;; avoiding the two-capture cross-match pairing hazard.
-           (dolist (cap (treesit-query-capture root dq))
+           (dolist (cap (anvil-builtin-treesit-query-capture root dq))
              (let* ((decl (cdr cap))
-                    (val (treesit-node-child-by-field-name decl "value"))
-                    (nm (treesit-node-child-by-field-name decl "name")))
+                    (val (anvil-builtin-treesit-node-child-by-field-name decl "value"))
+                    (nm (anvil-builtin-treesit-node-child-by-field-name decl "name")))
                (when (and val nm
-                          (member (treesit-node-type val)
+                          (member (anvil-builtin-treesit-node-type val)
                                   '("arrow_function" "function_expression"))
-                          (string= (treesit-node-type nm) "identifier"))
-                 (emit-def val "function" (treesit-node-text nm t)))))
-           (dolist (cap (treesit-query-capture root caq))
+                          (string= (anvil-builtin-treesit-node-type nm) "identifier"))
+                 (emit-def val "function" (anvil-builtin-treesit-node-text nm t)))))
+           (dolist (cap (anvil-builtin-treesit-query-capture root caq))
              (let* ((node (cdr cap))
                     (callee (anvil-defs--ts-callee node)))
                (when (and callee (not (string-empty-p callee)))
                  (push (list :name callee
-                             :line (line-number-at-pos (treesit-node-start node))
+                             :line (line-number-at-pos (anvil-builtin-treesit-node-start node))
                              :context (anvil-defs--ts-enclosing-defun node)
                              :kind "call")
                        refs))))
            ;; import specifiers -> features (kind "requires"); the module
            ;; string is stored with surrounding quotes stripped.
-           (dolist (cap (treesit-query-capture root imq))
-             (let* ((raw (treesit-node-text (cdr cap) t))
+           (dolist (cap (anvil-builtin-treesit-query-capture root imq))
+             (let* ((raw (anvil-builtin-treesit-node-text (cdr cap) t))
                     (m (if (and (>= (length raw) 2)
                                 (memq (aref raw 0) '(?\" ?\' ?\`)))
                            (substring raw 1 (1- (length raw)))
@@ -979,7 +994,7 @@ same top-level parser."
 the helper safe when anvil-defs is loaded on an older Emacs that
 falls through to the emacsql stub branch."
   (pcase anvil-defs--backend
-    ('builtin (and (fboundp 'sqlitep) (sqlitep db)))
+    ('builtin (and (fboundp 'sqlitep) (anvil-builtin-sqlitep db)))
     ('emacsql (and db t))
     (_ nil)))
 
