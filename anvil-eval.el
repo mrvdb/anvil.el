@@ -289,7 +289,7 @@ Use emacs-eval-result to retrieve the result.
 MCP Parameters:
   expression - Emacs Lisp expression to evaluate asynchronously
                (string, required)
-               Example: \"(byte-compile-file \\\"~/.emacs.d/init.el\\\")\"
+               Example: \"(byte-compile-file \\\"~/example-init.el\\\")\"
                Use for long-running operations that would timeout with
                emacs-eval."
   (anvil-server-with-error-handling

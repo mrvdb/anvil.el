@@ -5,7 +5,6 @@
 ;; Author: Laurynas Biveinis (original mcp-server-lib), zawatton (anvil fork)
 ;; Keywords: comm, tools
 ;; Version: 0.2.1
-;; Package-Requires: ((emacs "27.1"))
 ;; URL: https://github.com/zawatton/anvil.el
 
 ;; This file is NOT part of GNU Emacs.
@@ -3056,6 +3055,9 @@ Schema extraction and MCP argument binding still use HANDLER's raw
 signature/docstring via `anvil-server-register-tool'."
   (anvil-server--make-encoded-handler
    handler #'anvil-server-encode-for-mcp))
+
+;; Metrics is loaded by this module; register only after its API is ready.
+(anvil-server-metrics--register-tools)
 
 (provide 'anvil-server)
 ;;; anvil-server.el ends here

@@ -322,7 +322,7 @@ it.  Optional `reset' is report-then-reset.")))
   (anvil-server-unregister-tools anvil-server-metrics--server-id
                                  (anvil-server-metrics--tool-specs)))
 
-(with-eval-after-load 'anvil-server
+(when (featurep 'anvil-server)
   (anvil-server-metrics--register-tools))
 
 (provide 'anvil-server-metrics)

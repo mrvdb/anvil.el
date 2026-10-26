@@ -1,0 +1,43 @@
+{
+  "core_emacs": "28.2",
+  "optional_emacs": "29.1",
+  "optional_files": [
+    "anvil-fusion-longrun-store.el",
+    "anvil-harness-telemetry.el",
+    "anvil-memory.el",
+    "anvil-memory-bridge.el",
+    "anvil-memory-obs.el",
+    "anvil-semantic.el",
+    "anvil-sqlite.el",
+    "anvil-worklog.el",
+    "anvil-builtin-backend.el"
+  ],
+  "builtin_boundary": "anvil-builtin-backend.el",
+  "builtin_symbols": [
+    "sqlite-available-p",
+    "sqlite-close",
+    "sqlite-execute",
+    "sqlite-more-p",
+    "sqlite-next",
+    "sqlite-open",
+    "sqlite-select",
+    "sqlitep",
+    "treesit-node-at",
+    "treesit-node-check",
+    "treesit-node-child",
+    "treesit-node-child-by-field-name",
+    "treesit-node-child-count",
+    "treesit-node-children",
+    "treesit-node-end",
+    "treesit-node-language",
+    "treesit-node-next-sibling",
+    "treesit-node-on",
+    "treesit-node-parent",
+    "treesit-node-start",
+    "treesit-node-text",
+    "treesit-node-type",
+    "treesit-parser-create",
+    "treesit-parser-root-node",
+    "treesit-query-capture"
+  ]
+}

@@ -54,6 +54,15 @@
 
 ;;; Code:
 
+;; Builtin-only implementations live behind the optional Emacs 29 boundary.
+(autoload 'anvil-builtin-treesit-node-child-by-field-name "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-end "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-start "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-text "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-parser-create "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-parser-root-node "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-query-capture "anvil-builtin-backend")
+
 (require 'cl-lib)
 (require 'subr-x)
 ;; treesit is the Emacs 29+ builtin; on NeLisp standalone it does not
@@ -480,12 +489,17 @@ need a second round-trip to the subprocess."
           :source source
           :raw raw)))
 
+(defun anvil-treesit-backend--plist-p (object)
+  "Return non-nil when OBJECT is a proper property list, including nil."
+  (let ((size (proper-list-p object)))
+    (and size (zerop (% size 2)))))
+
 (defun anvil-treesit-backend--node-plistp (x)
   "Return non-nil when X is a non-empty plist with a `:type' key.
 Used to guard recursion: a literal nil is the empty plist (= matches
 `plistp') but is not a node we want to descend into."
   (and (consp x)
-       (plistp x)
+       (anvil-treesit-backend--plist-p x)
        (or (plist-member x :type) (plist-member x :_type))))
 
 (defun anvil-treesit-backend--walk-normalise (node)
@@ -518,7 +532,7 @@ Handles Acorn's `:id (:type \"Identifier\" :name \"foo\")', Python's
         (name (plist-get node :name)))
     (cond
      ((stringp name) name)
-     ((and (plistp id) (stringp (plist-get id :name)))
+     ((and (anvil-treesit-backend--plist-p id) (stringp (plist-get id :name)))
       (plist-get id :name))
      ((stringp (plist-get node :id)) (plist-get node :id))
      (t nil))))
@@ -572,7 +586,7 @@ or a plist `(:type STRING)' that may be extended in later phases.
 Always returns a list (possibly empty); never signals on a miss."
   (let ((target (cond
                  ((stringp selector) selector)
-                 ((and (plistp selector) (plist-get selector :type))
+                 ((and (anvil-treesit-backend--plist-p selector) (plist-get selector :type))
                   (plist-get selector :type))
                  (t nil)))
         acc)
@@ -581,7 +595,7 @@ Always returns a list (possibly empty); never signals on a miss."
 
 (defun anvil-treesit-backend--walk-collect (node target visit)
   "Recursively walk NODE; call VISIT on each node whose `:type' = TARGET."
-  (when (and (plistp node) (plist-get node :type))
+  (when (and (anvil-treesit-backend--plist-p node) (plist-get node :type))
     (when (or (null target)
               (string= target (plist-get node :type)))
       (funcall visit node))
@@ -615,20 +629,20 @@ facing entry is `anvil-treesit-with-root', which handles file IO."
   (with-temp-buffer
     (let ((coding-system-for-read 'utf-8-unix))
       (insert source))
-    (let ((parser (treesit-parser-create lang)))
-      (treesit-parser-root-node parser))))
+    (let ((parser (anvil-builtin-treesit-parser-create lang)))
+      (anvil-builtin-treesit-parser-root-node parser))))
 
 (defun anvil-treesit-backend-treesit-query (root selector)
   "Run SELECTOR (compiled query) against ROOT.  Returns capture alist."
-  (treesit-query-capture root selector))
+  (anvil-builtin-treesit-query-capture root selector))
 
 (defun anvil-treesit-backend-treesit-node-text (node &optional _source)
   "Return NODE's text content as a string."
-  (treesit-node-text node t))
+  (anvil-builtin-treesit-node-text node t))
 
 (defun anvil-treesit-backend-treesit-node-range (node)
   "Return (START . END) for NODE, 1-based buffer positions."
-  (cons (treesit-node-start node) (treesit-node-end node)))
+  (cons (anvil-builtin-treesit-node-start node) (anvil-builtin-treesit-node-end node)))
 
 ;;;; --- backend interface (= dispatch) -------------------------------------
 
@@ -692,8 +706,8 @@ is unavailable.  FILE may not be nil."
      (anvil-treesit-ensure-grammar lang)
      (with-temp-buffer
        (anvil-treesit--insert-file file)
-       (let* ((parser (treesit-parser-create lang))
-              (root (treesit-parser-root-node parser)))
+       (let* ((parser (anvil-builtin-treesit-parser-create lang))
+              (root (anvil-builtin-treesit-parser-root-node parser)))
          (funcall fn root))))
     ('subprocess
      (anvil-treesit-backend-subprocess-not-implemented lang 'with-root))
@@ -711,18 +725,18 @@ are torn down when BODY returns."
 
 (defun anvil-treesit-node-range (node)
   "Return (:start POINT :end POINT) for NODE as 1-based point positions."
-  (list :start (treesit-node-start node)
-        :end (treesit-node-end node)))
+  (list :start (anvil-builtin-treesit-node-start node)
+        :end (anvil-builtin-treesit-node-end node)))
 
 (defun anvil-treesit-node-text (node)
   "Return NODE's text content as a string."
-  (treesit-node-text node t))
+  (anvil-builtin-treesit-node-text node t))
 
 (defun anvil-treesit-node-bounds (node)
   "Return (:start :end :start-line :end-line) for NODE.
 Line numbers are 1-based.  Convenience shape for listing operations."
-  (let ((s (treesit-node-start node))
-        (e (treesit-node-end node)))
+  (let ((s (anvil-builtin-treesit-node-start node))
+        (e (anvil-builtin-treesit-node-end node)))
     (list :start s
           :end e
           :start-line (line-number-at-pos s)
@@ -730,7 +744,7 @@ Line numbers are 1-based.  Convenience shape for listing operations."
 
 (defun anvil-treesit-child-by-field (node field-name)
   "Return NODE's child under FIELD-NAME, or nil."
-  (treesit-node-child-by-field-name node field-name))
+  (anvil-builtin-treesit-node-child-by-field-name node field-name))
 
 ;;;; --- edit-plan primitives ------------------------------------------------
 

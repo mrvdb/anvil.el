@@ -31,6 +31,21 @@
 ;; those node types do not exist in the JavaScript grammar.
 
 ;;; Code:
+(autoload 'anvil-builtin-treesit-node-check "anvil-builtin-backend")
+
+;; Builtin-only implementations live behind the optional Emacs 29 boundary.
+(autoload 'anvil-builtin-treesit-node-child "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-child-by-field-name "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-children "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-end "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-language "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-next-sibling "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-on "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-parent "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-start "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-text "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-node-type "anvil-builtin-backend")
+(autoload 'anvil-builtin-treesit-query-capture "anvil-builtin-backend")
 
 (require 'cl-lib)
 (require 'subr-x)
@@ -117,15 +132,15 @@ which the JS query set never asks for.")
 Works for function_declaration, class_declaration,
 interface_declaration, type_alias_declaration, and
 method_definition."
-  (let ((n (treesit-node-child-by-field-name node "name")))
+  (let ((n (anvil-builtin-treesit-node-child-by-field-name node "name")))
     (if n (anvil-treesit-node-text n) "")))
 
 (defun anvil-ts--async-node-p (node)
   "Return non-nil when NODE has an `async' modifier child.
 The TS / JS grammars expose `async' as an anonymous leading child
 rather than a named field."
-  (let ((c0 (treesit-node-child node 0)))
-    (and c0 (string= (treesit-node-text c0 t) "async"))))
+  (let ((c0 (anvil-builtin-treesit-node-child node 0)))
+    (and c0 (string= (anvil-builtin-treesit-node-text c0 t) "async"))))
 
 (defun anvil-ts--enclosing-class-name (node)
   "Return the name of the class body directly containing NODE, or nil.
@@ -133,10 +148,10 @@ Climbs past a `class_body' parent to the `class_declaration', then
 reads the `name' field.  Methods buried inside a nested arrow body
 or another function do not count --- only direct members of a class
 match, matching anvil-py's behaviour."
-  (let ((body (treesit-node-parent node)))
-    (when (and body (string= (treesit-node-type body) "class_body"))
-      (let ((cls (treesit-node-parent body)))
-        (when (and cls (string= (treesit-node-type cls) "class_declaration"))
+  (let ((body (anvil-builtin-treesit-node-parent node)))
+    (when (and body (string= (anvil-builtin-treesit-node-type body) "class_body"))
+      (let ((cls (anvil-builtin-treesit-node-parent body)))
+        (when (and cls (string= (anvil-builtin-treesit-node-type cls) "class_declaration"))
           (anvil-ts--node-name cls))))))
 
 (defun anvil-ts--export-target-name (export-node)
@@ -146,12 +161,12 @@ Handles:
   `export type T' / `export const x = ...' / `export default <expr>'.
 Returns (:kind 'reexport :name nil) for `export { a, b }' re-exports
 and (:kind 'side-effect :name nil) for bare `export *' etc."
-  (let ((kid (treesit-node-child export-node 1))
+  (let ((kid (anvil-builtin-treesit-node-child export-node 1))
         kind name)
     (cond
      ((null kid) (list :kind 'reexport :name nil))
      (t
-      (setq kind (pcase (treesit-node-type kid)
+      (setq kind (pcase (anvil-builtin-treesit-node-type kid)
                    ("function_declaration"        'function)
                    ("generator_function_declaration" 'function)
                    ("class_declaration"           'class)
@@ -167,16 +182,16 @@ and (:kind 'side-effect :name nil) for bare `export *' etc."
               ('const
                (let ((decl (car (cl-remove-if-not
                                  (lambda (c)
-                                   (string= (treesit-node-type c)
+                                   (string= (anvil-builtin-treesit-node-type c)
                                             "variable_declarator"))
-                                 (treesit-node-children kid t)))))
+                                 (anvil-builtin-treesit-node-children kid t)))))
                  (and decl (anvil-ts--node-name decl))))
               ('var
                (let ((decl (car (cl-remove-if-not
                                  (lambda (c)
-                                   (string= (treesit-node-type c)
+                                   (string= (anvil-builtin-treesit-node-type c)
                                             "variable_declarator"))
-                                 (treesit-node-children kid t)))))
+                                 (anvil-builtin-treesit-node-children kid t)))))
                  (and decl (anvil-ts--node-name decl))))
               ((or 'function 'class 'interface 'type 'enum)
                (anvil-ts--node-name kid))
@@ -195,7 +210,7 @@ so the distinction has to come from inspecting `:text' rather than
   (anvil-treesit-with-root file lang root
     (let ((q (anvil-ts--query lang 'imports))
           results)
-      (dolist (cap (treesit-query-capture root q))
+      (dolist (cap (anvil-builtin-treesit-query-capture root q))
         (let ((node (cdr cap)))
           (push (list :kind 'import
                       :text (anvil-treesit-node-text node)
@@ -210,7 +225,7 @@ See `anvil-ts--export-target-name' for the :kind vocabulary."
   (anvil-treesit-with-root file lang root
     (let ((q (anvil-ts--query lang 'exports))
           results)
-      (dolist (cap (treesit-query-capture root q))
+      (dolist (cap (anvil-builtin-treesit-query-capture root q))
         (let* ((node (cdr cap))
                (target (anvil-ts--export-target-name node)))
           (push (list :kind (plist-get target :kind)
@@ -230,7 +245,7 @@ returned as kind=arrow with :name coming from the declarator."
   (anvil-treesit-with-root file lang root
     (let (results)
       ;; Regular function declarations.
-      (dolist (cap (treesit-query-capture
+      (dolist (cap (anvil-builtin-treesit-query-capture
                     root (anvil-ts--query lang 'functions)))
         (when (eq (car cap) 'fn)
           (let* ((node (cdr cap))
@@ -244,19 +259,19 @@ returned as kind=arrow with :name coming from the declarator."
       ;; Arrow-function bindings (named via their enclosing
       ;; variable_declarator).  The capture comes back paired:
       ;; @arrow-name + @arrow per match.
-      (let* ((caps (treesit-query-capture
+      (let* ((caps (anvil-builtin-treesit-query-capture
                     root (anvil-ts--query lang 'arrow-bindings)))
              (by-pair (make-hash-table :test 'equal)))
         (dolist (cap caps)
           (let* ((node (cdr cap))
-                 (parent (treesit-node-parent node))
+                 (parent (anvil-builtin-treesit-node-parent node))
                  ;; Group captures that share a variable_declarator
                  ;; parent.  The declarator's (:start . :end) is a
                  ;; stable key even when the arrow node has a wider
                  ;; span.
                  (key (when parent
-                        (cons (treesit-node-start parent)
-                              (treesit-node-end parent)))))
+                        (cons (anvil-builtin-treesit-node-start parent)
+                              (anvil-builtin-treesit-node-end parent)))))
             (when key
               (push cap (gethash key by-pair)))))
         (maphash
@@ -266,7 +281,7 @@ returned as kind=arrow with :name coming from the declarator."
              (when (and name-cap arrow-cap)
                (let* ((arrow-node (cdr arrow-cap))
                       (name-node (cdr name-cap))
-                      (declarator (treesit-node-parent arrow-node))
+                      (declarator (anvil-builtin-treesit-node-parent arrow-node))
                       (bounds (if declarator
                                   (anvil-treesit-node-bounds declarator)
                                 (anvil-treesit-node-bounds arrow-node))))
@@ -289,7 +304,7 @@ Each entry: (:kind 'class :name STR :async nil :bounds PLIST)."
   (anvil-treesit-with-root file lang root
     (let ((q (anvil-ts--query lang 'classes))
           results)
-      (dolist (cap (treesit-query-capture root q))
+      (dolist (cap (anvil-builtin-treesit-query-capture root q))
         (let ((node (cdr cap)))
           (push (list :kind 'class
                       :name (anvil-ts--node-name node)
@@ -307,15 +322,15 @@ only the first-level body of a class named CLASS-NAME matches."
   (anvil-treesit-with-root file lang root
     (let ((q (anvil-ts--query lang 'methods))
           results)
-      (dolist (cap (treesit-query-capture root q))
+      (dolist (cap (anvil-builtin-treesit-query-capture root q))
         (when (eq (car cap) 'method)
           (let* ((node (cdr cap))
                  (enclosing (anvil-ts--enclosing-class-name node)))
             (when (and enclosing (string= enclosing class-name))
               (let* ((static-p
                       (cl-some (lambda (c)
-                                 (string= (treesit-node-text c t) "static"))
-                               (treesit-node-children node nil))))
+                                 (string= (anvil-builtin-treesit-node-text c t) "static"))
+                               (anvil-builtin-treesit-node-children node nil))))
                 (push (list :kind 'method
                             :class-name enclosing
                             :name (anvil-ts--node-name node)
@@ -333,7 +348,7 @@ Each entry: (:kind 'interface :name STR :bounds PLIST)."
   (anvil-treesit-with-root file lang root
     (let ((q (anvil-ts--query lang 'interfaces))
           results)
-      (dolist (cap (treesit-query-capture root q))
+      (dolist (cap (anvil-builtin-treesit-query-capture root q))
         (let ((node (cdr cap)))
           (push (list :kind 'interface
                       :name (anvil-ts--node-name node)
@@ -348,7 +363,7 @@ Valid only for `typescript' / `tsx'.  Each entry:
   (anvil-treesit-with-root file lang root
     (let ((q (anvil-ts--query lang 'type-aliases))
           results)
-      (dolist (cap (treesit-query-capture root q))
+      (dolist (cap (anvil-builtin-treesit-query-capture root q))
         (let ((node (cdr cap)))
           (push (list :kind 'type
                       :name (anvil-ts--node-name node)
@@ -421,15 +436,15 @@ candidates (see `anvil-ts--find-definition-lang')."
 (defun anvil-ts--import-module-of (node)
   "Return the module string (no quotes) of an `import_statement' NODE."
   (let (mod)
-    (dolist (c (treesit-node-children node t))
+    (dolist (c (anvil-builtin-treesit-node-children node t))
       (when (and (null mod)
-                 (string= (treesit-node-type c) "string"))
+                 (string= (anvil-builtin-treesit-node-type c) "string"))
         ;; Find the string_fragment child; falls back to the node's
         ;; raw text with quotes trimmed when the grammar omits it.
         (let ((frag (cl-find-if (lambda (cc)
-                                  (string= (treesit-node-type cc)
+                                  (string= (anvil-builtin-treesit-node-type cc)
                                            "string_fragment"))
-                                (treesit-node-children c t))))
+                                (anvil-builtin-treesit-node-children c t))))
           (setq mod (if frag
                         (anvil-treesit-node-text frag)
                       (let ((raw (anvil-treesit-node-text c)))
@@ -444,15 +459,15 @@ candidates (see `anvil-ts--find-definition-lang')."
 Detected by an anonymous `type' keyword child of `import_statement'
 \\(the grammar does not elevate it to a named node)."
   (cl-some (lambda (c)
-             (and (not (treesit-node-check c 'named))
-                  (string= (treesit-node-text c t) "type")))
-           (treesit-node-children node nil)))
+             (and (not (anvil-builtin-treesit-node-check c 'named))
+                  (string= (anvil-builtin-treesit-node-text c t) "type")))
+           (anvil-builtin-treesit-node-children node nil)))
 
 (defun anvil-ts--import-clause (node)
   "Return the direct `import_clause' child of NODE, or nil."
   (cl-find "import_clause"
-           (treesit-node-children node t)
-           :key #'treesit-node-type
+           (anvil-builtin-treesit-node-children node t)
+           :key #'anvil-builtin-treesit-node-type
            :test #'string=))
 
 (defun anvil-ts--import-default-of (node)
@@ -461,8 +476,8 @@ Detected by an anonymous `type' keyword child of `import_statement'
     (when clause
       (let ((ident (cl-find-if
                     (lambda (c)
-                      (string= (treesit-node-type c) "identifier"))
-                    (treesit-node-children clause t))))
+                      (string= (anvil-builtin-treesit-node-type c) "identifier"))
+                    (anvil-builtin-treesit-node-children clause t))))
         (and ident (anvil-treesit-node-text ident))))))
 
 (defun anvil-ts--import-namespace-of (node)
@@ -471,13 +486,13 @@ Detected by an anonymous `type' keyword child of `import_statement'
     (when clause
       (let ((ns (cl-find-if
                  (lambda (c)
-                   (string= (treesit-node-type c) "namespace_import"))
-                 (treesit-node-children clause t))))
+                   (string= (anvil-builtin-treesit-node-type c) "namespace_import"))
+                 (anvil-builtin-treesit-node-children clause t))))
         (when ns
           (let ((ident (cl-find-if
                         (lambda (c)
-                          (string= (treesit-node-type c) "identifier"))
-                        (treesit-node-children ns t))))
+                          (string= (anvil-builtin-treesit-node-type c) "identifier"))
+                        (anvil-builtin-treesit-node-children ns t))))
             (and ident (anvil-treesit-node-text ident))))))))
 
 (defun anvil-ts--named-imports-node (node)
@@ -485,8 +500,8 @@ Detected by an anonymous `type' keyword child of `import_statement'
   (let ((clause (anvil-ts--import-clause node)))
     (when clause
       (cl-find "named_imports"
-               (treesit-node-children clause t)
-               :key #'treesit-node-type
+               (anvil-builtin-treesit-node-children clause t)
+               :key #'anvil-builtin-treesit-node-type
                :test #'string=))))
 
 (defun anvil-ts--import-specifier-parts (spec-node)
@@ -496,8 +511,8 @@ SPEC-NODE is an `import_specifier' — e.g. `a', `a as b', `type a',
   (let ((type-only nil)
         (idents '())
         saw-as)
-    (dolist (c (treesit-node-children spec-node nil))
-      (pcase (treesit-node-type c)
+    (dolist (c (anvil-builtin-treesit-node-children spec-node nil))
+      (pcase (anvil-builtin-treesit-node-type c)
         ("type" (setq type-only t))
         ("as"   (setq saw-as t))
         ("identifier"
@@ -513,17 +528,17 @@ Each entry: (:name STR :alias STR-OR-NIL :type-only BOOL)."
   (let ((ni (anvil-ts--named-imports-node node)))
     (when ni
       (let (out)
-        (dolist (c (treesit-node-children ni t))
-          (when (string= (treesit-node-type c) "import_specifier")
+        (dolist (c (anvil-builtin-treesit-node-children ni t))
+          (when (string= (anvil-builtin-treesit-node-type c) "import_specifier")
             (push (anvil-ts--import-specifier-parts c) out)))
         (nreverse out)))))
 
 (defun anvil-ts--find-import-by-module (root module)
   "Return the first `import ... from MODULE' statement in ROOT, or nil."
   (let (found)
-    (dolist (cap (treesit-query-capture
+    (dolist (cap (anvil-builtin-treesit-query-capture
                   root (anvil-ts--query
-                        (treesit-node-language root) 'imports)))
+                        (anvil-builtin-treesit-node-language root) 'imports)))
       (unless found
         (let ((n (cdr cap)))
           (when (string= (anvil-ts--import-module-of n) module)
@@ -562,7 +577,7 @@ drops :named."
           (mapcar (lambda (e)
                     (cond
                      ((stringp e) (list :name e :alias nil :type-only nil))
-                     ((and (consp e) (not (plistp e)))
+                     ((and (consp e) (not (anvil-treesit-backend--plist-p e)))
                       (list :name (car e) :alias (cdr e) :type-only nil))
                      (t e)))
                   named))
@@ -590,14 +605,14 @@ Picks the end of the last existing top-level import statement, or
 the start of the first non-import top-level statement."
   (let ((last-import-end nil)
         (first-non-import-start nil)
-        (c (treesit-node-child root 0)))
+        (c (anvil-builtin-treesit-node-child root 0)))
     (while c
-      (pcase (treesit-node-type c)
+      (pcase (anvil-builtin-treesit-node-type c)
         ("import_statement"
-         (setq last-import-end (treesit-node-end c)))
+         (setq last-import-end (anvil-builtin-treesit-node-end c)))
         (_ (unless first-non-import-start
-             (setq first-non-import-start (treesit-node-start c)))))
-      (setq c (treesit-node-next-sibling c)))
+             (setq first-non-import-start (anvil-builtin-treesit-node-start c)))))
+      (setq c (anvil-builtin-treesit-node-next-sibling c)))
     (or last-import-end
         first-non-import-start
         (point-min))))
@@ -611,7 +626,7 @@ plist so downstream comparisons don't need to handle both shapes."
                 (lambda (e)
                   (cond
                    ((stringp e) (list :name e :alias nil :type-only nil))
-                   ((and (consp e) (not (plistp e)))
+                   ((and (consp e) (not (anvil-treesit-backend--plist-p e)))
                     (list :name (car e) :alias (cdr e) :type-only nil))
                    (t e)))
                 named))
@@ -653,7 +668,7 @@ is already present and the type-only flag matches."
              (format "add-import from \"%s\" (new)" module))))
          ;; Existing with mismatching type-only flag — append new stmt.
          ((not (eq ex-type-only type-only))
-          (let* ((ins (treesit-node-end existing))
+          (let* ((ins (anvil-builtin-treesit-node-end existing))
                  (rendered (anvil-ts--render-import-statement spec))
                  (new-text (concat "\n" rendered)))
             (anvil-treesit-make-plan
@@ -702,8 +717,8 @@ is already present and the type-only flag matches."
                              :default new-default
                              :namespace (or cur-namespace want-namespace)
                              :named merged)))
-                     (beg (treesit-node-start existing))
-                     (end (treesit-node-end existing)))
+                     (beg (anvil-builtin-treesit-node-start existing))
+                     (end (anvil-builtin-treesit-node-end existing)))
                 (anvil-treesit-make-plan
                  file beg end rendered
                  (format "add-import from \"%s\" (merge %d name%s)"
@@ -752,8 +767,8 @@ trailing newline).  No-op when SPEC is already absent."
              ((and (null new-default)
                    (null cur-namespace)
                    (null kept-named))
-              (let* ((beg (treesit-node-start existing))
-                     (end (treesit-node-end existing))
+              (let* ((beg (anvil-builtin-treesit-node-start existing))
+                     (end (anvil-builtin-treesit-node-end existing))
                      (end+1 (with-temp-buffer
                               (insert-file-contents file)
                               (goto-char end)
@@ -769,8 +784,8 @@ trailing newline).  No-op when SPEC is already absent."
                              :default new-default
                              :namespace cur-namespace
                              :named kept-named)))
-                     (beg (treesit-node-start existing))
-                     (end (treesit-node-end existing)))
+                     (beg (anvil-builtin-treesit-node-start existing))
+                     (end (anvil-builtin-treesit-node-end existing)))
                 (anvil-treesit-make-plan
                  file beg end rendered
                  (format "remove-import from \"%s\"" module)))))))))))
@@ -796,7 +811,7 @@ Reference use sites are not touched — that is Phase 3 territory."
   (anvil-treesit-with-root file lang root
     (let* ((q (anvil-ts--query lang 'imports))
            (matches '()))
-      (dolist (cap (treesit-query-capture root q))
+      (dolist (cap (anvil-builtin-treesit-query-capture root q))
         (let* ((node (cdr cap))
                (default (anvil-ts--import-default-of node))
                (namespace (anvil-ts--import-namespace-of node))
@@ -857,9 +872,9 @@ Reference use sites are not touched — that is Phase 3 territory."
                          :default new-default
                          :namespace new-namespace
                          :named new-named)))
-                 (beg (treesit-node-start node))
-                 (end (treesit-node-end node))
-                 (current (treesit-node-text node)))
+                 (beg (anvil-builtin-treesit-node-start node))
+                 (end (anvil-builtin-treesit-node-end node))
+                 (current (anvil-builtin-treesit-node-text node)))
             (if (string= current rendered)
                 (anvil-treesit-make-noop-plan
                  file (format "rename-import %s → %s" old new))
@@ -939,12 +954,12 @@ prepended so the swapped block keeps the original column."
 CLASS-FILTER restricts to methods of a named class.  Signals a
 `user-error' on ambiguity (without CLASS-FILTER) or miss."
   (let (candidates)
-    (dolist (cap (treesit-query-capture root (anvil-ts--query lang 'functions)))
+    (dolist (cap (anvil-builtin-treesit-query-capture root (anvil-ts--query lang 'functions)))
       (when (eq (car cap) 'fn)
         (let ((n (cdr cap)))
           (when (string= (anvil-ts--node-name n) name)
             (push (cons nil n) candidates)))))
-    (dolist (cap (treesit-query-capture root (anvil-ts--query lang 'methods)))
+    (dolist (cap (anvil-builtin-treesit-query-capture root (anvil-ts--query lang 'methods)))
       (when (eq (car cap) 'method)
         (let* ((n (cdr cap))
                (cls (anvil-ts--enclosing-class-name n)))
@@ -990,8 +1005,8 @@ function_declaration / method_definition node itself.  Double-
 apply with identical NEW-SOURCE is a no-op."
   (anvil-treesit-with-root file lang root
     (let* ((fn (anvil-ts--find-replace-target lang root name class-filter))
-           (fn-start (treesit-node-start fn))
-           (fn-end (treesit-node-end fn))
+           (fn-start (anvil-builtin-treesit-node-start fn))
+           (fn-end (anvil-builtin-treesit-node-end fn))
            (indent (anvil-ts--leading-whitespace-at fn-start))
            (dedented (anvil-ts--dedent new-source))
            (replacement (anvil-ts--reindent-except-first dedented indent))
@@ -1037,13 +1052,13 @@ apply with identical NEW-SOURCE is a no-op."
 
 (defun anvil-ts--node-at-exact-range (lang start end)
   "Return the tree-sitter node whose range is exactly [START, END)."
-  (let ((n (treesit-node-on start end lang)))
+  (let ((n (anvil-builtin-treesit-node-on start end lang)))
     (catch 'found
       (while n
-        (when (and (= (treesit-node-start n) start)
-                   (= (treesit-node-end n) end))
+        (when (and (= (anvil-builtin-treesit-node-start n) start)
+                   (= (anvil-builtin-treesit-node-end n) end))
           (throw 'found n))
-        (setq n (treesit-node-parent n)))
+        (setq n (anvil-builtin-treesit-node-parent n)))
       nil)))
 
 (cl-defun anvil-ts--plan-wrap-expr (lang file start end wrapper)
@@ -1061,7 +1076,7 @@ ranges signal a `user-error' rather than produce invalid source."
                          original wrapper t t))
            (reason (format "wrap-expr [%d,%d)%s" start end
                            (if node
-                               (format " (%s)" (treesit-node-type node))
+                               (format " (%s)" (anvil-builtin-treesit-node-type node))
                              " (unaligned!)"))))
       (unless node
         (user-error

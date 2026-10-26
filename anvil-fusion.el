@@ -2,8 +2,7 @@
 ;;; anvil-audit: tools-wrapped-at-registration
 
 ;; Author: zawatton + Claude
-;; Keywords: ai, orchestrator, fusion
-;; Package-Requires: ((emacs "29.1"))
+;; Keywords: ai, orchestrator, fusion, tools
 
 ;;; Commentary:
 ;;

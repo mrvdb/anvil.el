@@ -1,4 +1,4 @@
-.PHONY: test test-all lint byte-compile clean sync-toml-filters check-toml-filters-sync
+.PHONY: test test-all lint lint-package byte-compile clean sync-toml-filters check-toml-filters-sync
 
 # Pin the temp directory for every recipe below.
 #
@@ -29,9 +29,11 @@ test:
 test-all:
 	emacs --batch --eval '(setq load-prefer-newer t)' -L . -l anvil-dev -f anvil-dev-test-run-all-batch
 
-lint:
-	eask lint package
+lint: lint-package
 	eask lint checkdoc
+
+lint-package:
+	bash scripts/lint-package.sh
 
 byte-compile:
 	eask compile

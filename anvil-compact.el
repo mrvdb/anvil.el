@@ -4,7 +4,6 @@
 
 ;; Author: zawatton
 ;; Keywords: tools, convenience
-;; Package-Requires: ((emacs "29.1"))
 
 ;; This file is NOT part of GNU Emacs.
 

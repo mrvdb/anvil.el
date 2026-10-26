@@ -30,6 +30,14 @@
 
 ;;; Code:
 
+;; Builtin-only implementations live behind the optional Emacs 29 boundary.
+(autoload 'anvil-builtin-sqlite-available-p "anvil-builtin-backend")
+(autoload 'anvil-builtin-sqlite-close "anvil-builtin-backend")
+(autoload 'anvil-builtin-sqlite-execute "anvil-builtin-backend")
+(autoload 'anvil-builtin-sqlite-open "anvil-builtin-backend")
+(autoload 'anvil-builtin-sqlite-select "anvil-builtin-backend")
+(autoload 'anvil-builtin-sqlitep "anvil-builtin-backend")
+
 (require 'cl-lib)
 (require 'subr-x)
 (require 'anvil-server)
@@ -137,7 +145,7 @@ Installed by `anvil-org-index-enable' when
 (defun anvil-org-index--detect-backend ()
   "Return the best available backend symbol, or signal `user-error'."
   (cond
-   ((and (fboundp 'sqlite-available-p) (sqlite-available-p))
+   ((and (fboundp 'sqlite-available-p) (anvil-builtin-sqlite-available-p))
     'builtin)
    ((require 'emacsql nil t)
     'emacsql)
@@ -148,26 +156,26 @@ Installed by `anvil-org-index-enable' when
 (defun anvil-org-index--open (path)
   "Open database at PATH using the active backend."
   (pcase anvil-org-index--backend
-    ('builtin (sqlite-open path))
+    ('builtin (anvil-builtin-sqlite-open path))
     ('emacsql
      (user-error "anvil-org-index: emacsql backend not yet implemented"))))
 
 (defun anvil-org-index--close (db)
   "Close DB."
   (pcase anvil-org-index--backend
-    ('builtin (when (sqlitep db) (sqlite-close db)))
+    ('builtin (when (anvil-builtin-sqlitep db) (anvil-builtin-sqlite-close db)))
     ('emacsql nil)))
 
 (defun anvil-org-index--execute (db sql &optional params)
   "Run SQL (DDL or INSERT/UPDATE/DELETE) against DB with PARAMS."
   (pcase anvil-org-index--backend
-    ('builtin (sqlite-execute db sql params))
+    ('builtin (anvil-builtin-sqlite-execute db sql params))
     ('emacsql (user-error "anvil-org-index: emacsql backend not yet implemented"))))
 
 (defun anvil-org-index--select (db sql &optional params)
   "Run SELECT SQL against DB with PARAMS.  Returns list of rows."
   (pcase anvil-org-index--backend
-    ('builtin (sqlite-select db sql params))
+    ('builtin (anvil-builtin-sqlite-select db sql params))
     ('emacsql (user-error "anvil-org-index: emacsql backend not yet implemented"))))
 
 (defmacro anvil-org-index--with-transaction (db &rest body)
@@ -471,7 +479,7 @@ No-op when the DB is not open.  Returns t on success, nil otherwise."
   (interactive)
   (and anvil-org-index--db
        (or (not (eq anvil-org-index--backend 'builtin))
-           (sqlitep anvil-org-index--db))
+           (anvil-builtin-sqlitep anvil-org-index--db))
        (progn
          (ignore-errors
            (anvil-org-index--execute anvil-org-index--db
@@ -503,7 +511,7 @@ No-op when the DB is not open.  Returns t on success, nil otherwise."
     (setq anvil-org-index--backend (anvil-org-index--detect-backend)))
   (unless (and anvil-org-index--db
                (or (not (eq anvil-org-index--backend 'builtin))
-                   (sqlitep anvil-org-index--db)))
+                   (anvil-builtin-sqlitep anvil-org-index--db)))
     (let ((dir (file-name-directory anvil-org-index-db-path)))
       (unless (file-directory-p dir) (make-directory dir t)))
     (setq anvil-org-index--db
@@ -1097,7 +1105,6 @@ a full parse rather than pick the wrong entry."
                     parent  current))))))
     (unless failed current)))
 
-;;;###autoload
 (defun anvil-org-index--lookup-id-bounded (db org-id max-depth)
   "Return (path line-start line-end level hid) for ORG-ID, bounded by MAX-DEPTH.
 MAX-DEPTH is a positive integer: 1 keeps just the target heading and
