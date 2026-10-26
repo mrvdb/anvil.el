@@ -106,8 +106,14 @@
       (should (= (alist-get 'code (alist-get 'error response)) -32603))
       (should (string-prefix-p "Internal error executing tool: " message-text))
       (should (< (length message-text) 4500))
-      (should (eq (caar hook-value) symbol))
-      (should (eq (cadar hook-value) payload))
+      ;; Telemetry receives a reconstructed allowlisted condition, never the
+      ;; original custom symbol or its unbounded request-owned payload.
+      (should (eq (caar hook-value) 'error))
+      (should-not (eq (cadar hook-value) payload))
+      (should (stringp (cadar hook-value)))
+      (should (< (length (cadar hook-value)) 4500))
+      (should (string-prefix-p "Internal error executing tool: Tool failure"
+                               (cadar hook-value)))
       (should (equal (cdr hook-value) '("condition" tool-body))))))
 
 (ert-deftest anvil-condition-generic-tool-small-errors-retain-native-message ()

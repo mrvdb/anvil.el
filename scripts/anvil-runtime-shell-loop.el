@@ -1013,9 +1013,18 @@ MODULES is the current `ANVIL_TOOL_MODULES' value the file must match."
   ;; load/enable of those modules fails with "Cannot open load file".
   (add-to-list 'load-path anvil-el-dir)
 
+  ;; Standalone does not resolve these Emacs autoload stubs on first call.
+  ;; Load only the delegating adapter definitions before eager state startup;
+  ;; their callers retain the original builtin availability checks.
+  (load (concat anvil-el-dir "/anvil-builtin-backend.el") nil t)
+
   ;; anvil-server module load chain.  Order: metrics → server → commands
   ;; (= matches anvil-server.el's `(require 'anvil-server-metrics)' and
   ;; anvil-server-commands.el's `(require 'anvil-server)').
+  ;; Metrics registration runs while the server loads and can initialize its
+  ;; schema cache.  Select the isolated runtime cache before that first read.
+  (setq anvil-server-schema-cache-file
+        (concat state-dir "/anvil-schema-cache.el"))
   (load metrics-el nil t)
   (when (and anvil-server--debug-trace (fboundp 'nelisp--write-stderr-line))
     (nelisp--write-stderr-line "[STEP] metrics-el done"))
@@ -1024,9 +1033,6 @@ MODULES is the current `ANVIL_TOOL_MODULES' value the file must match."
     (nelisp--write-stderr-line "[STEP] server-el done"))
   ;; Keep the schema cache next to the fast-handshake cache so one state
   ;; dir holds every persisted artefact of a standalone deployment.
-  (when (boundp 'anvil-server-schema-cache-file)
-    (setq anvil-server-schema-cache-file
-          (concat state-dir "/anvil-schema-cache.el")))
   (load server-commands-el nil t)
   (when (and anvil-server--debug-trace (fboundp 'nelisp--write-stderr-line))
     (nelisp--write-stderr-line "[STEP] server-commands-el done"))

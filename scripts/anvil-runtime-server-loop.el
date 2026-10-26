@@ -321,11 +321,11 @@ died on emacs-init.el)."
   ;; "Cannot open load file anvil-orchestrator-routing".
   (add-to-list 'load-path anvil-el-dir)
 
+  ;; Server loading registers metrics and can read the cache immediately.
+  (setq anvil-server-schema-cache-file
+        (concat state-dir "/anvil-schema-cache.el"))
   (load metrics-el nil t)
   (load server-el nil t)
-  (when (boundp 'anvil-server-schema-cache-file)
-    (setq anvil-server-schema-cache-file
-          (concat state-dir "/anvil-schema-cache.el")))
   (load server-commands-el nil t)
   ;; User config, as in shell-loop.el (machine-specific DB pins).
   (condition-case err
