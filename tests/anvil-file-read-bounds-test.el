@@ -106,6 +106,8 @@
              (should (equal "last" (plist-get page :content)))
              (should (= 2 (plist-get page :total-lines))))
            (should requests)
+           (should (= (ceiling (string-bytes body) anvil-file--stream-chunk-bytes)
+                      (length requests)))
            (should (<= largest anvil-file--stream-chunk-bytes))
            (should (cl-every (lambda (range)
                                (<= (- (cdr range) (car range))
@@ -155,6 +157,7 @@
      "short\n"
      (lambda (path)
        (let ((orig (symbol-function 'insert-file-contents-literally))
+             (anvil-file--stream-chunk-bytes 4)
              (reads 0))
          (cl-letf (((symbol-function 'insert-file-contents-literally)
                     (lambda (file &optional visit beg end replace)
@@ -185,8 +188,8 @@
                    ((symbol-function 'anvil--insert-file)
                     (lambda (&rest _) (ert-fail "full loader called"))))
            (should-error (anvil-file-read path 0 1))
-           ;; Classifier consumes 17 chunks; the selector rejects on its first.
-           (should (= 18 reads))
+           ;; Both possible EOL pages exceed the cap in the first raw chunk.
+           (should (= 1 reads))
            (should (cl-every (lambda (buffer) (not (buffer-live-p buffer)))
                              buffers))))))))
 
@@ -212,16 +215,16 @@
   (anvil-file-read-bounds-test--with-bytes
    "old\nbody\n"
    (lambda (path)
-     (let ((original (symbol-function 'anvil-file--stream-eol-mode))
+     (let ((original (symbol-function 'insert-file-contents-literally))
            (make-buffer (symbol-function 'generate-new-buffer))
            (buffers nil))
        (cl-letf (((symbol-function 'generate-new-buffer)
                   (lambda (&rest args)
                     (let ((buffer (apply make-buffer args)))
                       (push buffer buffers) buffer)))
-                 ((symbol-function 'anvil-file--stream-eol-mode)
-                  (lambda (target generation)
-                    (prog1 (funcall original target generation)
+                 ((symbol-function 'insert-file-contents-literally)
+                  (lambda (&rest args)
+                    (prog1 (apply original args)
                       (let ((coding-system-for-write 'utf-8-unix))
                         (write-region "new\nbody\n" nil path nil 'silent))
                       (set-file-times path (time-add (current-time)

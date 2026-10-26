@@ -291,18 +291,39 @@ do not leak between runs.  The stub records arguments in
                     (not (getenv "ANVIL_SKIP_LIVE"))))
   (let ((anvil-state-db-path (make-temp-file "anvil-browser-live-" nil ".db"))
         (anvil-state--db nil)
+        (anvil-browser-session-name (make-temp-name "anvil-browser-test-"))
+        (process-environment (copy-sequence process-environment))
         (anvil-browser--metrics (list :fetches 0 :cache-hits 0
                                       :errors 0 :log nil))
         (anvil-browser-cache-ttl-sec 0)
         (anvil-browser-timeout-sec 90))
+    ;; --session-name persists state; AGENT_BROWSER_SESSION isolates the
+    ;; actual browser so this smoke test cannot navigate an existing session.
+    (setenv "AGENT_BROWSER_SESSION" anvil-browser-session-name)
     (unwind-protect
         (progn
           (anvil-state-enable)
           (let ((snap (anvil-browser--tool-fetch "https://example.com")))
             (should (stringp snap))
-            (should (string-match-p "Example Domain" snap))))
-      (anvil-state-disable)
-      (ignore-errors (delete-file anvil-state-db-path)))))
+            ;; Fetch intentionally returns interactive-only snapshots (-i -c),
+            ;; so verify its link and obtain static page identity separately.
+            (should (string-match-p
+                     (regexp-quote "- link \"Learn more\"") snap))
+            (let ((identity (anvil-browser--check-all-success
+                             (anvil-browser--run-batch
+                              '(("get" "title") ("get" "url"))))))
+              (should (equal "Example Domain"
+                             (plist-get (plist-get (nth 0 identity) :result)
+                                        :title)))
+              (should (equal "https://example.com/"
+                             (plist-get (plist-get (nth 1 identity) :result)
+                                        :url))))))
+      (unwind-protect
+          ;; Close only this test's isolated session, never all browsers.
+          (anvil-browser--check-all-success
+           (anvil-browser--run-batch '(("close"))))
+        (anvil-state-disable)
+        (ignore-errors (delete-file anvil-state-db-path))))))
 
 (provide 'anvil-browser-test)
 ;;; anvil-browser-test.el ends here

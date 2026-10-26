@@ -47,7 +47,9 @@
         (let ((status
                (call-process
                 timeout nil t nil
-                "--kill-after=2" "45"
+                ;; This is only the complete regression harness envelope;
+                ;; every bridge phase keeps its stricter production deadline.
+                "--kill-after=90" "900"
                 python "-I" "-B" "-u"
                 helper bridge bridge-bash emacs)))
           (unless (and (integerp status) (zerop status))
@@ -86,6 +88,24 @@
         (should
          (string-match-p
           (regexp-quote "ANVIL_MCP_NOT_READY_SENTINEL")
+          source))
+        (should-not
+         (string-match-p
+          (regexp-quote
+           "[ \"$ack_wait_count\" -lt 50 ]")
+          source))
+        (should
+         (string-match-p
+          (regexp-quote "ANVIL-MCP-RUNNER-WAIT")
+          source))
+        (should-not (string-match-p "ack_deadline" source))
+        (should-not
+         (string-match-p
+          (regexp-quote "printf '%65536s' ''")
+          source))
+        (should
+         (string-match-p
+          (regexp-quote "phase=ack operation=$operation")
           source))))))
 
 (provide 'anvil-stdio-readiness-test)

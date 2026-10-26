@@ -23,11 +23,13 @@
       (let ((status (call-process python nil t nil
                                   (expand-file-name "anvil-stdio-timeout-test.py" test-dir)
                                   "--script" script)))
-        (should (= status 0))
+        (ert-info ((format "Python timeout helper status=%S output:\n%s"
+                           status (buffer-string)))
+          (should (= status 0)))
         (should (string-match-p "PASS" (buffer-string)))))))
 
 (ert-deftest anvil-stdio-timeout-test/perl-contract ()
-  "Run the fallback contract without relying on GNU timeout."
+  "Run the installed-copy environment profile without GNU timeout."
   (unless (memq system-type '(gnu/linux darwin))
     (ert-skip "Perl process-group contracts require Linux or macOS"))
   (let* ((test-dir anvil-stdio-timeout-test--dir)
@@ -43,7 +45,9 @@
                                   (expand-file-name "anvil-stdio-timeout-test.py" test-dir)
                                   "--script" (expand-file-name "anvil-stdio.sh" repo-dir)
                                   "--backend" "perl")))
-        (should (= status 0))
+        (ert-info ((format "Perl timeout helper status=%S output:\n%s"
+                           status (buffer-string)))
+          (should (= status 0)))
         (should (string-match-p "PASS" (buffer-string)))))))
 
 (provide 'anvil-stdio-timeout-test)

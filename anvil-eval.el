@@ -436,7 +436,13 @@ Formatting and truncation happen in the isolated child."
       (let* ((finish (current-time))
              (start (plist-get job :start-time))
              (run-start (plist-get job :run-start-time))
-             (deadline-timer (plist-get job :deadline-timer)))
+             (deadline-timer (plist-get job :deadline-timer))
+             (bounded-result
+              (if (eq status 'error)
+                  (anvil-server-truncate-text
+                   result anvil-server-tool-error-max-chars
+                   "inspect the error locally for additional details")
+                (anvil-eval--bound-result result))))
         (when (timerp deadline-timer)
           (cancel-timer deadline-timer))
         (anvil-eval--async-remove-from-queue job-id)
@@ -446,7 +452,7 @@ Formatting and truncation happen in the isolated child."
         (setq job (plist-put job :status status))
         (setq job (plist-put job :phase 'terminal))
         (setq job (plist-put job :reason reason))
-        (setq job (plist-put job :result result))
+        (setq job (plist-put job :result bounded-result))
         (setq job (plist-put job :finish-time finish))
         (setq job
               (plist-put

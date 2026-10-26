@@ -85,7 +85,8 @@ def main():
     ap.add_argument("--script", required=True, type=pathlib.Path)
     ap.add_argument("--baseline", action="store_true")
     ap.add_argument("--force-cleanup-check", action="store_true")
-    ap.add_argument("--backend", choices=("gnu", "perl"), default="gnu")
+    ap.add_argument("--backend", choices=("gnu", "perl"), default="gnu",
+                    help="Historical environment profile; execution uses the owned runner")
     args = ap.parse_args()
     script = args.script.resolve()
     timeout = shutil.which("timeout")
@@ -129,13 +130,24 @@ def main():
         state.write_text("0")
         client = bin_dir / "emacsclient"
         client.write_text('''#!/usr/bin/env python3
-import base64, json, os, pathlib, signal, sys, time
+import base64, json, os, pathlib, re, signal, sys, time
 root = pathlib.Path(os.environ["CASE_ROOT"])
 args = sys.argv[1:]
 expr = args[args.index("-e") + 1]
+if expr == "t":
+    mode = os.environ.get("PROBE_MODE", "plain")
+    n = int((root / "state").read_text())
+    (root / "state").write_text(str(n + 1))
+    with (root / "calls.jsonl").open("a") as f:
+        f.write(json.dumps({"probe": mode}) + "\\n")
+    if (mode == "retry" and n == 0) or (mode == "exhaust" and n < 2):
+        print("can't find socket", file=sys.stderr)
+        raise SystemExit(1)
+    print("t")
+    raise SystemExit
 if expr.startswith("(") and not "base64-decode-string" in expr:
     with (root / "calls.jsonl").open("a") as f: f.write(expr + "\\n")
-    print("nil")
+    print('"anvil-mcp-lifecycle-complete"')
     raise SystemExit
 encoded = expr.split('base64-decode-string "', 1)[1].split('"', 1)[0]
 req = json.loads(base64.b64decode(encoded))
@@ -165,24 +177,27 @@ if method == "orphan":
     os.close(write_fd)
     os.read(read_fd, 1)
     os.close(read_fd)
-if method == "retry":
-    n = int((root / "state").read_text())
-    (root / "state").write_text(str(n + 1))
-    if n == 0:
-        print("", file=sys.stderr); print("can't find socket", file=sys.stderr)
-        raise SystemExit(1)
 if method == "exhaust":
     print("can't find socket", file=sys.stderr)
     raise SystemExit(1)
 if method == "immediate":
     print("elisp evaluation failed", file=sys.stderr)
     raise SystemExit(1)
-if "id" not in req:
-    print('""')
-    raise SystemExit
 body = {"jsonrpc":"2.0", "id":req.get("id"), "result":{"method":method}}
-encoded = base64.b64encode(json.dumps(body, separators=(",", ":")).encode()).decode()
-print('"' + encoded + '"')
+wire = json.dumps(body, separators=(",", ":")).encode() if "id" in req else b""
+paths = [pathlib.Path(base64.b64decode(value).decode())
+         for value in re.findall(r'base64-decode-string "([A-Za-z0-9+/=]+)"', expr)]
+stages = [path for path in paths if re.fullmatch(r"\\.response-tmp\\.[0-9]+\\..+", path.name)]
+if len(stages) != 1:
+    raise RuntimeError(f"missing unique authenticated response stage: {paths!r}")
+stage = stages[0]
+sequence = int(stage.name.split(".")[2])
+with stage.open("wb") as stream:
+    stream.write(wire)
+os.link(stage, stage.parent / f"response.{sequence}.json")
+os.link(stage, stage.parent / f"proof.{sequence}.json")
+stage.unlink()
+print(f'"anvil-mcp-response-staged:{sequence}:{len(wire)}"')
 ''')
         client.chmod(0o755)
         env = os.environ.copy()
@@ -190,11 +205,17 @@ print('"' + encoded + '"')
         if args.backend == "gnu":
             path += os.pathsep + env.get("PATH", "")
         env.update(PATH=path,
-                   CASE_ROOT=str(root), ANVIL_EMACSCLIENT_TIMEOUT="0.15",
+                   CASE_ROOT=str(root), ANVIL_EMACSCLIENT_PROBE_TIMEOUT="1",
+                   ANVIL_EMACSCLIENT_READINESS_TIMEOUT="2",
+                   ANVIL_EMACSCLIENT_STARTUP_DISPATCH_TIMEOUT="1",
+                   ANVIL_EMACSCLIENT_KILL_AFTER_TIMEOUT="1",
                    ANVIL_EMACSCLIENT_RETRY_MAX="2", ANVIL_EMACSCLIENT_RETRY_DELAY_MS="0")
 
-        def run(data, framed=False, timeout_value="0.15", init=False, force_fail=False):
-            env["ANVIL_EMACSCLIENT_TIMEOUT"] = timeout_value
+        def run(data, framed=False, timeout_value="1", init=False, force_fail=False):
+            env["ANVIL_EMACSCLIENT_DISPATCH_TIMEOUT"] = timeout_value
+            env["PROBE_MODE"] = "retry" if b'"retry"' in data else (
+                "exhaust" if b'"exhaust"' in data else "plain")
+            state.write_text("0")
             cmd = [str(run_script)]
             if init:
                 cmd += ["--init-function=init-fn", "--stop-function=stop-fn"]
@@ -279,15 +300,19 @@ print('"' + encoded + '"')
                     failure_body, next_body = out.splitlines()
                 failure_obj = json.loads(failure_body)
                 message = failure_obj.get("error", {}).get("message", "")
+                failure_data = failure_obj.get("error", {}).get("data", {})
                 check(failure_obj.get("id") == 1 and "Bridge synthetic error" in message and
-                      message.endswith(("rc=124)", "rc=137)")),
+                      failure_data == {"phase": "dispatch", "dispatched": True,
+                                       "replayed": False, "emacsclientRc": 124},
                       f"timeout response mismatch: {failure_obj!r}")
                 check(rc == 0 and next_body == expected_body.encode(),
                       f"framing/next request mismatch: {rc} {out!r} {err!r}")
                 if framed:
                     check(next_frame == frame(expected_body).encode(),
                           f"next Content-Length frame mismatch: {next_frame!r}")
-                check(1.0 <= elapsed < 4.0, f"unexpected timeout duration {elapsed:.2f}s")
+                # Two TERM-resistant calls each consume a one-second deadline
+                # and one-second kill grace, plus at most two seconds of setup.
+                check(4.0 <= elapsed < 6.0, f"unexpected timeout duration {elapsed:.2f}s")
                 ids = list(map(int, pids.read_text().splitlines()))[previous_ids:]
                 # Each hanging call and its same-group child must be gone.
                 for _ in range(20):
@@ -297,11 +322,11 @@ print('"' + encoded + '"')
                       f"TERM-resistant process survived: {[(pid, alive(pid)) for pid in ids]}")
                 passed += 2
             if args.backend == "perl":
-                # Fractional timeout above and integer timeout here both
-                # bound a TERM and ALRM-resistant process group.
+                # A single integer phase timeout also bounds the process group.
                 previous_ids = len(pids.read_text().splitlines())
                 rc, out, _, elapsed = run((request("hang", 8) + "\n").encode(), timeout_value="1")
-                check(rc == 0 and b"Bridge synthetic error" in out and b"rc=124" in out,
+                check(rc == 0 and b"Bridge synthetic error" in out and
+                      json.loads(out)["error"]["data"]["emacsclientRc"] == 124,
                       "integer timeout response mismatch")
                 check(1.8 <= elapsed < 4.0, f"integer timeout duration was {elapsed:.2f}s")
                 ids = list(map(int, pids.read_text().splitlines()))[previous_ids:]
@@ -330,6 +355,12 @@ print('"' + encoded + '"')
             calls = log.read_text().splitlines()
             check(sum("init-fn" in x for x in calls) == 1 and sum("stop-fn" in x for x in calls) == 1,
                   "init/stop call count mismatch")
+            check(sum('"method": "retry"' in x for x in calls) == 1,
+                  "stateful retry request was replayed")
+            # Init's first readiness attempt fails once; its retry, two request
+            # probes and the stop probe succeed.  Stateful calls never retry.
+            check(sum('"probe": "retry"' in x for x in calls) == 5,
+                  "readiness retry / lifecycle probe counts mismatch")
             passed += 3
             # Exhausted socket retries stay bounded; non-socket errors are single-shot.
             before = len(calls)
@@ -338,35 +369,51 @@ print('"' + encoded + '"')
             after_calls = log.read_text().splitlines()[before:]
             check(rc == 0 and b"Bridge synthetic error" in out and b'"id":7' in out,
                   "error classification output mismatch")
-            check(sum('"method": "exhaust"' in x for x in after_calls) == 2 and
+            check(sum('"probe": "exhaust"' in x for x in after_calls) == 4 and
+                  sum('"method": "exhaust"' in x for x in after_calls) == 0 and
                   sum('"method": "immediate"' in x for x in after_calls) == 1 and
                   sum('"method": "notice"' in x for x in after_calls) == 1,
                   "retry exhaustion / immediate error / notification counts mismatch")
             passed += 2
-            rc, out, _, _ = run((request("plain", 5) + "\n").encode(), timeout_value="0")
-            check(rc == 0 and b'"id":5' in out, "timeout=0 bypass failed")
-            passed += 1
+            # Current phase deadlines are positive integers; legacy fractional
+            # and disabled values must fail before even a readiness probe.
+            for invalid in ("0.15", "0"):
+                call_count = len(log.read_text().splitlines())
+                rc, out, _, _ = run((request("plain", 5) + "\n").encode(), timeout_value=invalid)
+                check(rc == 64 and not out and len(log.read_text().splitlines()) == call_count,
+                      f"unsupported timeout {invalid!r} reached a client")
+                passed += 1
             if args.backend == "perl":
-                # Invalid timeout/backend setups fail before dispatching.
+                # Malformed phase deadlines fail before dispatching.  Removing
+                # both legacy supervisors must not disable owned-runner custody.
                 call_count = len(log.read_text().splitlines())
                 rc, out, _, _ = run((request("plain", 10) + "\n").encode(), timeout_value="1e2")
-                check(rc == 0 and b"rc=69" in out and len(log.read_text().splitlines()) == call_count,
+                check(rc == 64 and not out
+                      and len(log.read_text().splitlines()) == call_count,
                       "malformed timeout was dispatched")
                 passed += 1
                 perl_link = path_dir / "perl"
                 perl_link.unlink()
                 call_count = len(log.read_text().splitlines())
-                rc, out, _, _ = run((request("plain", 11) + "\n").encode(), timeout_value="1")
-                check(rc == 0 and b"rc=69" in out and
-                      len(log.read_text().splitlines()) == call_count,
-                      "missing Perl timeout backend dispatched the client")
+                previous_ids = len(pids.read_text().splitlines())
+                rc, out, _, _ = run((request("hang", 11) + "\n" +
+                                     request("after", 14) + "\n").encode())
+                responses = [json.loads(line) for line in out.splitlines()]
+                check(rc == 0 and responses[0]["error"]["data"] ==
+                      {"phase": "dispatch", "dispatched": True,
+                       "replayed": False, "emacsclientRc": 124} and
+                      responses[1]["result"]["method"] == "after",
+                      "owned runner failed without GNU timeout or Perl")
+                ids = list(map(int, pids.read_text().splitlines()))[previous_ids:]
+                check(len(ids) == 2 and all(not alive(pid) for pid in ids),
+                      "missing legacy supervisors leaked timeout descendants")
                 passed += 1
+                call_count = len(log.read_text().splitlines())
                 rc, out, _, _ = run((request("plain", 12) + "\n").encode(), timeout_value="0")
-                check(rc == 0 and b'"id":12' in out and
-                      len(log.read_text().splitlines()) == call_count + 1,
-                      "timeout=0 did not bypass the missing supervisor")
+                check(rc == 64 and not out and len(log.read_text().splitlines()) == call_count,
+                      "timeout=0 bypassed validation without legacy supervisors")
                 passed += 1
-    print(f"PASS {passed} checks")
+    print(f"PASS {passed} checks ({args.backend} environment; owned runner)")
 
 
 if __name__ == "__main__":
